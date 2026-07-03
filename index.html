@@ -45,8 +45,17 @@
             const verifier = generateRandomString(128);
             const challenge = await generateCodeChallenge(verifier);
             localStorage.setItem("verifier", verifier);
-            const params = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri, scope: "user-top-read", code_challenge_method: "S256", code_challenge: challenge });
-            location.href = `https://spotify.com{params}`;
+            
+            // 💡 改用最傳統、絕對不會出錯的加號（+）字串拼接
+            const authUrl = "https://spotify.com" +
+                "?client_id=" + clientId +
+                "&response_type=code" +
+                "&redirect_uri=" + encodeURIComponent(redirectUri) +
+                "&scope=user-top-read" +
+                "&code_challenge_method=S256" +
+                "&code_challenge=" + challenge;
+                
+            location.href = authUrl;
         }
         window.onload = async () => {
             const urlParams = new URLSearchParams(window.location.search);
