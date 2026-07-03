@@ -94,68 +94,77 @@
 
         // --- 階段 3: 資料擷取與核心數據分析 ---
         async function startAnalysis(token) {
-            // 1. 抓取使用者的最常聽 50 首曲目
-            const trackRes = await fetch('https://spotify.com', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const trackData = await trackRes.json();
-            const tracks = trackData.items;
+            try {
+                // 1. 抓取使用者的最常聽 50 首曲目
+                const trackRes = await fetch('https://spotify.com', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const trackData = await trackRes.json();
+                const tracks = trackData.items;
 
-            if (!tracks || tracks.length === 0) {
-                alert("找不到您的聆聽紀錄，請確保這個 Spotify 帳號平時有在聽歌喔！");
-                showSection('login-section');
-                return;
-            }
+                if (!tracks || tracks.length === 0) {
+                    alert("找不到您的聆聽紀錄，請確保這個 Spotify 帳號平時有在聽歌喔！");
+                    showSection('login-section');
+                    return;
+                }
 
-            // 2. 提取發行年份與流行度
-            const years = tracks.map(t => t.album.release_date.substring(0, 4));
-            const pops = tracks.map(t => Math.floor(t.popularity / 20)); // 將 0-100 分成 5 個區間
+                // 2. 提取發行年份與流行度
+                const years = tracks.map(t => t.album.release_date.substring(0, 4));
+                const pops = tracks.map(t => Math.floor(t.popularity / 20));
 
-            // 3. 收集歌手 ID 並批次抓取歌手大類流派
-            const artistIds = [...new Set(tracks.map(t => t.artists[0].id))].slice(0, 50).join(',');
-            const artistRes = await fetch(`https://spotify.com{artistIds}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const artistData = await artistRes.json();
-            
-            // 建立歌手 ID 對應流派的字典
-            const artistGenreMap = {};
-            artistData.artists.forEach(a => { artistGenreMap[a.id] = a.genres; });
-
-            // 4. 統計每首歌對應到的簡化大類流派數
-            const genreCounts = {};
-            const allAssignedGenres = [];
-
-            tracks.forEach(track => {
-                const genres = artistGenreMap[track.artists[0].id] || [];
-                // 核心關鍵字簡化邏輯：將繁雜的流派對應到大類
-                let mappedGenre = '其他 (Others)';
-                const combinedText = genres.join(' ').toLowerCase();
+                // 3. 收集歌手 ID 並批次抓取歌手大類流派
+                const trackArtistIds = tracks.map(t => t.artists[0]?.id).filter(Boolean);
+                const artistIds = [...new Set(trackArtistIds)].slice(0, 50).join(',');
                 
-                if (combinedText.includes('pop') || combinedText.includes('dance')) mappedGenre = '流行 (Pop)';
-                else if (combinedText.includes('rock') || combinedText.includes('metal') || combinedText.includes('punk')) mappedGenre = '搖滾 (Rock)';
-                else if (combinedText.includes('hip hop') || combinedText.includes('rap') || combinedText.includes('trap')) mappedGenre = '嘻哈 (Hip Hop)';
-                else if (combinedText.includes('electronic') || combinedText.includes('house') || combinedText.includes('edm')) mappedGenre = '電子 (Electronic)';
-                else if (combinedText.includes('jazz') || combinedText.includes('soul') || combinedText.includes('r&b')) mappedGenre = '藍調爵士 (Jazz/R&B)';
-                else if (combinedText.includes('indie') || combinedText.includes('alternative')) mappedGenre = '獨立音樂 (Indie)';
+                const artistRes = await fetch(`https://spotify.com{artistIds}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const artistData = await artistRes.json();
+                
+                const artistGenreMap = {};
+                if (artistData && artistData.artists) {
+                    artistData.artists.forEach(a => { if(a) artistGenreMap[a.id] = a.genres; });
+                }
 
-                genreCounts[mappedGenre] = (genreCounts[mappedGenre] || 0) + 1;
-                allAssignedGenres.push(mappedGenre);
-            });
+                // 4. 統計每首歌對應到的簡化大類流派數
+                const genreCounts = {};
+                const allAssignedGenres = [];
 
-            // 5. 計算三個指標的 Shannon Entropy (香農熵)
-            const yearEntropy = calculateEntropy(years);
-            const popEntropy = calculateEntropy(pops);
-            const genreEntropy = calculateEntropy(allAssignedGenres);
+                tracks.forEach(track => {
+                    const mainArtistId = track.artists[0]?.id;
+                    const genres = artistGenreMap[mainArtistId] || [];
+                    let mappedGenre = '其他 (Others)';
+                    const combinedText = genres.join(' ').toLowerCase();
+                    
+                    if (combinedText.includes('pop') || combinedText.includes('dance')) mappedGenre = '流行 (Pop)';
+                    else if (combinedText.includes('rock') || combinedText.includes('metal') || combinedText.includes('punk')) mappedGenre = '搖滾 (Rock)';
+                    else if (combinedText.includes('hip hop') || combinedText.includes('rap') || combinedText.includes('trap')) mappedGenre = '嘻哈 (Hip Hop)';
+                    else if (combinedText.includes('electronic') || combinedText.includes('house') || combinedText.includes('edm')) mappedGenre = '電子 (Electronic)';
+                    else if (combinedText.includes('jazz') || combinedText.includes('soul') || combinedText.includes('r&b')) mappedGenre = '藍調爵士 (Jazz/R&B)';
+                    else if (combinedText.includes('indie') || combinedText.includes('alternative')) mappedGenre = '獨立音樂 (Indie)';
 
-            // 6. 計算前五大核心流派文字清單 (處理平手)
-            const sortedGenres = Object.entries(genreCounts).sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-            const top5Genres = sortedGenres.slice(0, 5);
+                    genreCounts[mappedGenre] = (genreCounts[mappedGenre] || 0) + 1;
+                    allAssignedGenres.push(mappedGenre);
+                });
 
-            // 7. 渲染畫面與長條圖
-            displayTopGenres(top5Genres);
-            drawChart(yearEntropy, popEntropy, genreEntropy);
-            showSection('result-section');
+                // 5. 計算三個指標的 Shannon Entropy
+                const yearEntropy = calculateEntropy(years);
+                const popEntropy = calculateEntropy(pops);
+                const genreEntropy = calculateEntropy(allAssignedGenres);
+
+                // 6. 計算前五大核心流派文字清單
+                const sortedGenres = Object.entries(genreCounts).sort((a,b) => b - a || a.localeCompare(b));
+                const top5Genres = sortedGenres.slice(0, 5);
+
+                // 7. 渲染畫面與長條圖
+                displayTopGenres(top5Genres);
+                drawChart(yearEntropy, popEntropy, genreEntropy);
+                showSection('result-section');
+            } catch (error) {
+                console.error(error);
+                alert("資料讀取或分析時發生錯誤。");
+                showSection('login-section');
+            }
         }
 
         // --- 階段 4: 數學公式與視覺化處理 ---
@@ -169,7 +178,6 @@
 
         function drawChart(y, p, g) {
             const ctx = document.getElementById('barChart').getContext('2d');
-            // 將熵值正規化轉換為 0-100 的數字 (預估最大熵分母為 2.6)
             const dataValues = [y, p, g].map(v => Math.min(Math.round((v / 2.6) * 100), 100));
             
             new Chart(ctx, {
@@ -184,7 +192,7 @@
                     }]
                 },
                 options: {
-                    indexAxis: 'y', // 橫向長條圖，適合手機閱讀
+                    indexAxis: 'y',
                     scales: {
                         x: { min: 0, max: 100, grid: { color: '#282828' }, ticks: { color: '#b3b3b3' } },
                         y: { ticks: { color: '#fff', font: { size: 14 } } }
@@ -199,14 +207,32 @@
 
         function displayTopGenres(genres) {
             const list = document.getElementById('genre-list');
-            list.innerHTML = genres.map(([name, count]) => `<li><span>${name}</span><span>${count} 首歌曲</span></li>`).join('');
-        }
+list.innerHTML = genres.map(([name, count]) => <li><span>${name}</span><span>${count} 首歌曲</span></li>).join('');
+}
+// --- 階段 5: 安全加密與權限交換輔助函式 (PKCE) ---
+function showSection(id) {
+document.querySelectorAll('section').forEach(s => s.style.display = 'none');
+document.getElementById(id).style.display = 'block';
+}
+async function getAccessToken(code) {
+const verifier = localStorage.getItem("verifier");
+const response = await fetch("spotify.com", {
+method: "POST",
+headers: { "Content-Type": "application/x-www-form-urlencoded" },
+body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code: code, redirect_uri: redirectUri, code_verifier: verifier })
+});
+const res = await response.json();
+return res.access_token;
+}
+function generateRandomString(length) {
+const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+return Array.from({length}, () => possible.charAt(Math.floor(Math.random() * possible.length))).join('');
+}
+async function generateCodeChallenge(codeVerifier) {
+const data = new TextEncoder().encode(codeVerifier);
+const digest = await window.crypto.subtle.digest('SHA-256', data);
+return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/+/g, '-').replace(///g, '_').replace(/=+$/, '');
+}
 
-        // --- 階段 5: 安全加密與權限交換輔助函式 (PKCE 必備) ---
-        function showSection(id) {
-            document.querySelectorAll('section').forEach(s => s.style.display = 'none');
-            document.getElementById(id).style.display = 'block';
-        }
 
-        async function getAccessToken(code) {
-            const verifier = localStorage.getItem("verifier");
+            
