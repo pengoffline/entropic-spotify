@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW"> 
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spotify 音樂品味多樣性分析</title>
@@ -24,7 +24,7 @@
     <div class="container">
         <section id="login-section">
             <h1>品味多樣性分析器</h1>
-            <p>透過科學公式（香農熵），計算出你音樂品味的混乱程度！</p>
+            <p>透過科學公式（香農熵），計算出你音樂品味的混亂程度！</p>
             <button class="btn" onclick="redirectToSpotify()">使用 Spotify 登入</button>
         </section>
         <section id="loading-section">
@@ -39,23 +39,26 @@
         </section>
     </div>
     <script>
+        // 🛠️ 1. 填入你的 Client ID
         const clientId = '18a7af28818a40abafa707e98e4d7a48'; 
-        const redirectUri = window.location.origin + window.location.pathname;
+        
+        // 🛠️ 2. 【非常重要】請直接把你的 GitHub Pages 完整網址死死寫在這裡！
+        // 例如：'https://github.io' (記得最後面一定要有斜線 /)
+        const redirectUri = 'https://pengoffline.github.io/entropic-spotify/index.html';
 
         async function redirectToSpotify() {
             const verifier = generateRandomString(128);
             const challenge = await generateCodeChallenge(verifier);
             localStorage.setItem("verifier", verifier);
             
-            // 💡 徹底更正：使用官方規格嚴格拼寫
-            const params = new URLSearchParams({
-                client_id: clientId,
-                response_type: 'code',
-                redirect_uri: redirectUri,
-                scope: 'user-top-read',
-                code_challenge_method: 'S256',
-                code_challenge: challenge
-            });
+            // 修正為 100% 標準且乾淨的 URLSearchParams 封裝
+            const params = new URLSearchParams();
+            params.append('client_id', clientId);
+            params.append('response_type', 'code');
+            params.append('redirect_uri', redirectUri);
+            params.append('scope', 'user-top-read');
+            params.append('code_challenge_method', 'S256');
+            params.append('code_challenge', challenge);
             
             location.href = 'https://spotify.com?' + params.toString();
         }
@@ -139,7 +142,3 @@
         async function generateCodeChallenge(codeVerifier) {
             const data = new TextEncoder().encode(codeVerifier); const digest = await window.crypto.subtle.digest('SHA-256', data);
             return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-        }
-    </script>
-</body>
-</html>
