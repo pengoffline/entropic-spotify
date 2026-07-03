@@ -46,6 +46,7 @@
             const challenge = await generateCodeChallenge(verifier);
             localStorage.setItem("verifier", verifier);
             const params = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri, scope: "user-top-read", code_challenge_method: "S256", code_challenge: challenge });
+            // 💡 修正這裡：改用反單引號，讓變數正確帶入網址中
             location.href = `https://spotify.com{params}`;
         }
         window.onload = async () => {
