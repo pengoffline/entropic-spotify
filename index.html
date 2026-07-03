@@ -24,7 +24,7 @@
     <div class="container">
         <section id="login-section">
             <h1>品味多樣性分析器</h1>
-            <p>透過科學公式（香農熵），計算出你音樂品味的混亂程度！</p>
+            <p>透過科學公式（香農熵），計算出你音樂品味的混乱程度！</p>
             <button class="btn" onclick="redirectToSpotify()">使用 Spotify 登入</button>
         </section>
         <section id="loading-section">
@@ -47,14 +47,15 @@
             const challenge = await generateCodeChallenge(verifier);
             localStorage.setItem("verifier", verifier);
             
-            // 💡 使用標準 URLSearchParams 物件，確保網址參數 100% 被正確編碼
-            const params = new URLSearchParams();
-            params.append('client_id', clientId);
-            params.append('response_type', 'code');
-            params.append('redirect_uri', redirectUri);
-            params.append('scope', 'user-top-read');
-            params.append('code_challenge_method', 'S256');
-            params.append('code_challenge', challenge);
+            // 💡 徹底更正：使用官方規格嚴格拼寫
+            const params = new URLSearchParams({
+                client_id: clientId,
+                response_type: 'code',
+                redirect_uri: redirectUri,
+                scope: 'user-top-read',
+                code_challenge_method: 'S256',
+                code_challenge: challenge
+            });
             
             location.href = 'https://spotify.com?' + params.toString();
         }
