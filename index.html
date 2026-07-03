@@ -41,22 +41,24 @@
     <script>
         const clientId = '18a7af28818a40abafa707e98e4d7a48'; 
         const redirectUri = window.location.origin + window.location.pathname;
+
         async function redirectToSpotify() {
             const verifier = generateRandomString(128);
             const challenge = await generateCodeChallenge(verifier);
             localStorage.setItem("verifier", verifier);
             
-            // 💡 改用最傳統、絕對不會出錯的加號（+）字串拼接
-            const authUrl = "https://spotify.com" +
-                "?client_id=" + clientId +
-                "&response_type=code" +
-                "&redirect_uri=" + encodeURIComponent(redirectUri) +
-                "&scope=user-top-read" +
-                "&code_challenge_method=S256" +
-                "&code_challenge=" + challenge;
-                
-            location.href = authUrl;
+            // 💡 使用標準 URLSearchParams 物件，確保網址參數 100% 被正確編碼
+            const params = new URLSearchParams();
+            params.append('client_id', clientId);
+            params.append('response_type', 'code');
+            params.append('redirect_uri', redirectUri);
+            params.append('scope', 'user-top-read');
+            params.append('code_challenge_method', 'S256');
+            params.append('code_challenge', challenge);
+            
+            location.href = 'https://spotify.com?' + params.toString();
         }
+
         window.onload = async () => {
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
@@ -71,6 +73,7 @@
                 }
             }
         };
+
         async function startAnalysis(token) {
             try {
                 const trackRes = await fetch('https://spotify.com', { headers: { 'Authorization': `Bearer ${token}` } });
@@ -101,10 +104,12 @@
                 displayTopGenres(top5Genres); drawChart(yearEntropy, popEntropy, genreEntropy); showSection('result-section');
             } catch (error) { console.error(error); alert("資料讀取或分析時發生錯誤。"); showSection('login-section'); }
         }
+
         function calculateEntropy(array) {
             if (array.length === 0) return 0; const counts = {}; array.forEach(x => counts[x] = (counts[x] || 0) + 1);
             const probs = Object.values(counts).map(c => c / array.length); return -probs.reduce((sum, p) => sum + p * Math.log2(p), 0);
         }
+
         function drawChart(y, p, g) {
             const ctx = document.getElementById('barChart').getContext('2d'); const dataValues = [y, p, g].map(v => Math.min(Math.round((v / 2.6) * 100), 100));
             new Chart(ctx, {
@@ -113,18 +118,23 @@
             });
             const totalScore = Math.round(dataValues.reduce((a,b)=>a+b) / 3); document.getElementById('score-text').innerText = `您的音樂多樣性總分：${totalScore} / 100`;
         }
+
         function displayTopGenres(genres) {
             const list = document.getElementById('genre-list'); list.innerHTML = genres.map(([name, count]) => `<li><span>${name}</span><span>${count} 首歌曲</span></li>`).join('');
         }
+
         function showSection(id) { document.querySelectorAll('section').forEach(s => s.style.display = 'none'); document.getElementById(id).style.display = 'block'; }
+
         async function getAccessToken(code) {
             const verifier = localStorage.getItem("verifier");
             const response = await fetch("https://spotify.com", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code: code, redirect_uri: redirectUri, code_verifier: verifier }) });
             const res = await response.json(); return res.access_token;
         }
+
         function generateRandomString(length) {
             const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; return Array.from({length}, () => possible.charAt(Math.floor(Math.random() * possible.length))).join('');
         }
+
         async function generateCodeChallenge(codeVerifier) {
             const data = new TextEncoder().encode(codeVerifier); const digest = await window.crypto.subtle.digest('SHA-256', data);
             return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
