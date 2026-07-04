@@ -1,5 +1,5 @@
 // ========================================
-// 基本設定
+// 基本設定 
 // ======================================== 
 const clientId = "18a7af28818a40abafa707e98e4d7a48"; // 換成你自己的
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html"; // 要跟Dashboard設定的一致
