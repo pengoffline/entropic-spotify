@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
-<head> 
+<head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Spotify 聆聽分析</title>
@@ -80,6 +80,26 @@
       font-size: 13px;
       color: #ccc;
     }
+    .range-btn {
+      background: #333;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 16px;
+      font-size: 14px;
+      margin-right: 8px;
+      cursor: pointer;
+    }
+    .range-btn.active {
+      background: #1DB954;
+      font-weight: bold;
+    }
+    .no-data-note {
+      color: #999;
+      font-size: 13px;
+      margin-top: -8px;
+      margin-bottom: 16px;
+    }
     #entropy-result {
       font-size: 20px;
       margin-top: 12px;
@@ -114,7 +134,12 @@
   </div>
 
   <div id="history-view" style="display:none;">
-    <h2>最近聆聽紀錄</h2>
+    <h2>聆聽紀錄</h2>
+    <div id="time-range-selector" style="margin-bottom:16px;">
+      <button class="range-btn" data-range="short_term">最近4週</button>
+      <button class="range-btn" data-range="medium_term">最近6個月</button>
+      <button class="range-btn" data-range="long_term">所有時間(約數年)</button>
+    </div>
     <div id="track-list"></div>
   </div>
 
