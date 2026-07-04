@@ -1,8 +1,9 @@
 // ========================================
-// 基本設定 
-// ======================================== 
-const clientId = "18a7af28818a40abafa707e98e4d7a48"; // 換成你自己的
-const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html"; // 要跟Dashboard設定的一致
+// 基本設定
+// ========================================
+const clientId = "18a7af28818a40abafa707e98e4d7a48";
+const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
+
 // 需要的權限:個人資料 + 最近聆聽紀錄
 const scope = "user-read-private user-read-email user-read-recently-played";
 
@@ -87,9 +88,30 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 });
 
+let currentToken = null; // 存起來讓時間範圍按鈕可以重複呼叫 API
+
 async function runAll(token) {
+  currentToken = token;
   await fetchProfile(token);
-  await fetchRecentlyPlayed(token);
+  setupRangeButtons();
+  await fetchTopTracks(token, "medium_term"); // 預設顯示「最近6個月」
+}
+
+// ========================================
+// 時間範圍按鈕(最近4週 / 6個月 / 所有時間)
+// ========================================
+function setupRangeButtons() {
+  const buttons = document.querySelectorAll(".range-btn");
+  buttons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      buttons.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      fetchTopTracks(currentToken, btn.dataset.range);
+    });
+    if (btn.dataset.range === "medium_term") {
+      btn.classList.add("active"); // 預設選中的按鈕
+    }
+  });
 }
 
 // ========================================
@@ -118,20 +140,26 @@ async function fetchProfile(token) {
 }
 
 // ========================================
-// 抓取最近聆聽紀錄 + 歌手流派
+// 抓取「最常聽」曲目(依時間範圍) + 歌手流派
+// time_range: short_term(約4週) / medium_term(約6個月) / long_term(約數年)
 // ========================================
-async function fetchRecentlyPlayed(token) {
-  const res = await fetch("https://api.spotify.com/v1/me/player/recently-played?limit=50", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+async function fetchTopTracks(token, timeRange) {
+  const container = document.getElementById("track-list");
+  container.innerHTML = "<p style='color:#999;'>載入中...</p>";
+
+  const res = await fetch(
+    `https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=50`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
 
   if (!res.ok) {
-    console.error("抓取聆聽紀錄失敗", res.status);
+    console.error("抓取最常聽曲目失敗", res.status);
+    container.innerHTML = "<p style='color:#f66;'>抓取資料失敗,請稍後再試。</p>";
     return;
   }
 
   const data = await res.json();
-  const tracks = data.items.map(item => item.track);
+  const tracks = data.items; // top/tracks 回傳的就是曲目本身,不像 recently-played 要多包一層 item.track
 
   // 蒐集所有出現過的 artist id(去重複),genre 掛在 artist 身上
   // 注意:Spotify 於 2026年2月移除了批次查詢端點 GET /v1/artists,
@@ -170,9 +198,17 @@ function renderTracks(tracks, artistGenreMap) {
   document.getElementById("history-view").style.display = "block";
   container.innerHTML = "";
 
+  // 說明性註記:Spotify 於 2026年2月起,對新申請的開發者帳號移除了
+  // track.popularity 欄位,且 artist.genres 資料本身也常常是空的(Spotify 資料品質問題)。
+  // 這裡誠實顯示「無資料」而不是硬做假數據。
+  const note = document.createElement("p");
+  note.className = "no-data-note";
+  note.textContent = "註:流行度欄位已被 Spotify 官方於個人開發者帳號中移除;部分歌手的流派資料 Spotify 本身也未提供分類。";
+  container.appendChild(note);
+
   tracks.forEach(track => {
     const releaseYear = track.album.release_date?.split("-")[0] || "未知";
-    const popularity = track.popularity;
+    const popularityText = (typeof track.popularity === "number") ? `${track.popularity}/100` : "無資料";
     const mainArtistId = track.artists[0].id;
     const genres = artistGenreMap[mainArtistId];
     const genreText = genres && genres.length > 0 ? genres.join(", ") : "無資料";
@@ -183,7 +219,7 @@ function renderTracks(tracks, artistGenreMap) {
       <img src="${track.album.images[2]?.url || track.album.images[0]?.url}" width="60" height="60">
       <div>
         <strong>${track.name}</strong> - ${track.artists.map(a => a.name).join(", ")}<br>
-        <small>發行年份: ${releaseYear} ｜ 流行度: ${popularity}/100 ｜ 流派: ${genreText}</small>
+        <small>發行年份: ${releaseYear} ｜ 流行度: ${popularityText} ｜ 流派: ${genreText}</small>
       </div>
     `;
     container.appendChild(item);
