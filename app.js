@@ -1,7 +1,14 @@
+// ========================================
+// 基本設定
+// ========================================
 const clientId = "18a7af28818a40abafa707e98e4d7a48"; // 換成你自己的
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html"; // 要跟Dashboard設定的一致
+// 需要的權限:個人資料 + 最近聆聽紀錄
+const scope = "user-read-private user-read-email user-read-recently-played";
 
-// ---- 產生 PKCE 用的隨機字串與雜湊 ----
+// ========================================
+// PKCE 工具函式
+// ========================================
 function generateRandomString(length) {
   const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let text = "";
@@ -20,15 +27,15 @@ async function generateCodeChallenge(codeVerifier) {
     .replace(/\//g, "_");
 }
 
-// ---- 登入按鈕:導向 Spotify 授權頁 ----
+// ========================================
+// 登入按鈕:導向 Spotify 授權頁
+// ========================================
 document.getElementById("login-btn")?.addEventListener("click", async () => {
   const codeVerifier = generateRandomString(64);
   const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-  // 存起來,等一下換 token 要用
   localStorage.setItem("code_verifier", codeVerifier);
 
-  const scope = "user-read-private user-read-email";
   const authUrl = new URL("https://accounts.spotify.com/authorize");
   const params = {
     response_type: "code",
@@ -42,7 +49,9 @@ document.getElementById("login-btn")?.addEventListener("click", async () => {
   window.location.href = authUrl.toString();
 });
 
-// ---- 頁面載入時檢查網址是否帶有 code(表示剛授權完被導回)----
+// ========================================
+// 頁面載入時:處理授權回跳 或 已登入狀態
+// ========================================
 window.addEventListener("DOMContentLoaded", async () => {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
@@ -68,18 +77,24 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     if (data.access_token) {
       localStorage.setItem("access_token", data.access_token);
-      // 清掉網址上的 code,避免重複使用
       window.history.replaceState({}, document.title, redirectUri);
-      fetchProfile(data.access_token);
+      await runAll(data.access_token);
     } else {
       console.error("換取 token 失敗", data);
     }
   } else if (localStorage.getItem("access_token")) {
-    fetchProfile(localStorage.getItem("access_token"));
+    await runAll(localStorage.getItem("access_token"));
   }
 });
 
-// ---- 抓取使用者資料 ----
+async function runAll(token) {
+  await fetchProfile(token);
+  await fetchRecentlyPlayed(token);
+}
+
+// ========================================
+// 抓取使用者個人資料
+// ========================================
 async function fetchProfile(token) {
   const res = await fetch("https://api.spotify.com/v1/me", {
     headers: { Authorization: `Bearer ${token}` },
@@ -87,17 +102,175 @@ async function fetchProfile(token) {
 
   if (!res.ok) {
     console.error("抓取使用者資料失敗", res.status);
-    localStorage.removeItem("access_token"); // token 可能過期
+    localStorage.removeItem("access_token");
     return;
   }
 
   const profile = await res.json();
 
   document.getElementById("login-view").style.display = "none";
-  document.getElementById("profile-view").style.display = "block";
-  document.getElementById("display-name").textContent = profile.display_name;
-  document.getElementById("email").textContent = profile.email || "無公開email";
+  document.getElementById("profile-view").style.display = "flex";
+  document.getElementById("display-name-title").textContent = `你好, ${profile.display_name}`;
+  document.getElementById("email").textContent = profile.email || "無公開 email";
   if (profile.images?.[0]) {
     document.getElementById("avatar").src = profile.images[0].url;
   }
+}
+
+// ========================================
+// 抓取最近聆聽紀錄 + 歌手流派
+// ========================================
+async function fetchRecentlyPlayed(token) {
+  const res = await fetch("https://api.spotify.com/v1/me/player/recently-played?limit=50", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    console.error("抓取聆聽紀錄失敗", res.status);
+    return;
+  }
+
+  const data = await res.json();
+  const tracks = data.items.map(item => item.track);
+
+  // 蒐集所有出現過的 artist id(去重複),genre 掛在 artist 身上
+  const artistIds = [...new Set(tracks.map(t => t.artists[0].id))];
+  const artistGenreMap = {};
+
+  for (let i = 0; i < artistIds.length; i += 50) {
+    const batch = artistIds.slice(i, i + 50);
+    const artistRes = await fetch(
+      `https://api.spotify.com/v1/artists?ids=${batch.join(",")}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const artistData = await artistRes.json();
+    artistData.artists.forEach(artist => {
+      artistGenreMap[artist.id] = artist.genres;
+    });
+  }
+
+  renderTracks(tracks, artistGenreMap);
+  renderDecadeAnalysis(tracks);
+}
+
+// ========================================
+// 顯示曲目清單(含發行年份 / 流行度 / 流派)
+// ========================================
+function renderTracks(tracks, artistGenreMap) {
+  const container = document.getElementById("track-list");
+  document.getElementById("history-view").style.display = "block";
+  container.innerHTML = "";
+
+  tracks.forEach(track => {
+    const releaseYear = track.album.release_date?.split("-")[0] || "未知";
+    const popularity = track.popularity;
+    const mainArtistId = track.artists[0].id;
+    const genres = artistGenreMap[mainArtistId];
+    const genreText = genres && genres.length > 0 ? genres.join(", ") : "無資料";
+
+    const item = document.createElement("div");
+    item.className = "track-item";
+    item.innerHTML = `
+      <img src="${track.album.images[2]?.url || track.album.images[0]?.url}" width="60" height="60">
+      <div>
+        <strong>${track.name}</strong> - ${track.artists.map(a => a.name).join(", ")}<br>
+        <small>發行年份: ${releaseYear} ｜ 流行度: ${popularity}/100 ｜ 流派: ${genreText}</small>
+      </div>
+    `;
+    container.appendChild(item);
+  });
+}
+
+// ========================================
+// 依年代分組 (1960s ~ 2020s) + Shannon Entropy
+// ========================================
+
+// 把發行年份轉換成所屬年代標籤,例如 1975 -> "1970s"
+// 超出 1960-2020 範圍的歸類到 "其他"
+function getDecadeLabel(releaseDate) {
+  if (!releaseDate) return "其他";
+  const year = parseInt(releaseDate.split("-")[0], 10);
+  if (isNaN(year) || year < 1960 || year >= 2030) return "其他";
+  const decadeStart = Math.floor(year / 10) * 10;
+  return `${decadeStart}s`;
+}
+
+// 計算 Shannon Entropy: H = -Σ p_i * log2(p_i)
+function calculateShannonEntropy(counts) {
+  const total = Object.values(counts).reduce((sum, c) => sum + c, 0);
+  if (total === 0) return 0;
+
+  let entropy = 0;
+  for (const count of Object.values(counts)) {
+    if (count === 0) continue;
+    const p = count / total;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+function renderDecadeAnalysis(tracks) {
+  const decadeOrder = ["1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"];
+
+  // 初始化計數
+  const counts = {};
+  decadeOrder.forEach(d => (counts[d] = 0));
+  let otherCount = 0;
+
+  tracks.forEach(track => {
+    const label = getDecadeLabel(track.album.release_date);
+    if (label === "其他") {
+      otherCount++;
+    } else {
+      counts[label]++;
+    }
+  });
+
+  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  // ---- 畫長條圖 (純 HTML/CSS,不需額外套件) ----
+  const barsContainer = document.getElementById("decade-bars");
+  barsContainer.innerHTML = "";
+  const maxCount = Math.max(...Object.values(counts), 1);
+
+  decadeOrder.forEach(decade => {
+    const count = counts[decade];
+    const widthPercent = (count / maxCount) * 100;
+
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <div class="bar-label">${decade}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${widthPercent}%;"></div>
+      </div>
+      <div class="bar-count">${count}</div>
+    `;
+    barsContainer.appendChild(row);
+  });
+
+  if (otherCount > 0) {
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <div class="bar-label">其他</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${(otherCount / maxCount) * 100}%; background:#666;"></div>
+      </div>
+      <div class="bar-count">${otherCount}</div>
+    `;
+    barsContainer.appendChild(row);
+  }
+
+  // ---- 計算並顯示 Shannon Entropy (只計算 1960s-2020s 分類內的曲目) ----
+  const entropy = calculateShannonEntropy(counts);
+  const maxPossibleEntropy = Math.log2(decadeOrder.length); // 若均勻分布在7個年代的理論最大值
+
+  document.getElementById("decade-view").style.display = "block";
+  document.getElementById("entropy-result").innerHTML = `
+    H = ${entropy.toFixed(4)} bits
+    <span style="color:#999; font-weight:normal; font-size:14px;">
+      (最大可能值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""})
+    </span>
+  `;
 }
