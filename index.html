@@ -1,19 +1,121 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <title>Spotify 登入</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spotify 聆聽分析</title>
+  <style>
+    body {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      background: #121212;
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+    }
+    h1, h2 {
+      color: #1DB954;
+    }
+    button {
+      background: #1DB954;
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 24px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1ed760;
+    }
+    #profile-view {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    #avatar {
+      border-radius: 50%;
+    }
+    .track-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 8px;
+    }
+    .track-item img {
+      border-radius: 4px;
+    }
+    .decade-block {
+      background: #1c1c1c;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .bar-label {
+      width: 70px;
+      font-size: 14px;
+    }
+    .bar-track {
+      flex: 1;
+      background: #333;
+      border-radius: 4px;
+      overflow: hidden;
+      height: 18px;
+    }
+    .bar-fill {
+      background: #1DB954;
+      height: 100%;
+    }
+    .bar-count {
+      width: 40px;
+      text-align: right;
+      font-size: 13px;
+      color: #ccc;
+    }
+    #entropy-result {
+      font-size: 20px;
+      margin-top: 12px;
+      color: #1DB954;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
+
   <div id="login-view">
-    <h1>歡迎使用</h1>
+    <h1>歡迎使用 Spotify 聆聽分析</h1>
     <button id="login-btn">用 Spotify 登入</button>
   </div>
 
   <div id="profile-view" style="display:none;">
-    <h1>你好, <span id="display-name"></span></h1>
-    <img id="avatar" width="120" style="border-radius:50%;">
-    <p>Email: <span id="email"></span></p>
+    <img id="avatar" width="80" height="80">
+    <div>
+      <h1 id="display-name-title">你好</h1>
+      <p>Email: <span id="email"></span></p>
+    </div>
+  </div>
+
+  <div id="decade-view" style="display:none;">
+    <h2>依發行年代分組 (1960s - 2020s)</h2>
+    <div class="decade-block" id="decade-bars"></div>
+    <h2>Shannon Entropy(年代分佈亂度)</h2>
+    <div id="entropy-result"></div>
+    <p style="color:#999; font-size:13px;">
+      Entropy 越高代表你聽的歌曲年代分佈越平均、越分散；越低代表越集中在少數幾個年代。
+    </p>
+  </div>
+
+  <div id="history-view" style="display:none;">
+    <h2>最近聆聽紀錄</h2>
+    <div id="track-list"></div>
   </div>
 
   <script src="app.js"></script>
