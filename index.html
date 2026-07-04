@@ -100,11 +100,30 @@
       margin-top: -8px;
       margin-bottom: 16px;
     }
-    #entropy-result {
+    .entropy-result {
       font-size: 20px;
       margin-top: 12px;
       color: #1DB954;
       font-weight: bold;
+    }
+    .entropy-explain {
+      color: #999;
+      font-size: 13px;
+    }
+    .genre-block {
+      background: #1c1c1c;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .summary-box {
+      background: #1c1c1c;
+      border: 1px solid #1DB954;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
     }
   </style>
 </head>
@@ -123,16 +142,6 @@
     </div>
   </div>
 
-  <div id="decade-view" style="display:none;">
-    <h2>依發行年代分組 (1960s - 2020s)</h2>
-    <div class="decade-block" id="decade-bars"></div>
-    <h2>Shannon Entropy(年代分佈亂度)</h2>
-    <div id="entropy-result"></div>
-    <p style="color:#999; font-size:13px;">
-      Entropy 越高代表你聽的歌曲年代分佈越平均、越分散；越低代表越集中在少數幾個年代。
-    </p>
-  </div>
-
   <div id="history-view" style="display:none;">
     <h2>聆聽紀錄</h2>
     <div id="time-range-selector" style="margin-bottom:16px;">
@@ -141,6 +150,30 @@
       <button class="range-btn" data-range="long_term">所有時間(約數年)</button>
     </div>
     <div id="track-list"></div>
+  </div>
+
+  <div id="decade-view" style="display:none;">
+    <h2>【維度一】依發行年代分組 (1960s - 2020s)</h2>
+    <div class="decade-block" id="decade-bars"></div>
+    <h3>Shannon Entropy(年代多元度)</h3>
+    <div class="entropy-result" id="decade-entropy-result"></div>
+    <p class="entropy-explain">Entropy 越高代表你聽的歌曲年代分佈越平均、越分散;越低代表越集中在少數幾個年代。</p>
+  </div>
+
+  <div id="fame-view" style="display:none;">
+    <h2>【維度二】依知名度分組 (Deezer rank)</h2>
+    <div class="decade-block" id="fame-bars"></div>
+    <h3>Shannon Entropy(知名度多元度)</h3>
+    <div class="entropy-result" id="fame-entropy-result"></div>
+    <p class="entropy-explain">Entropy 越高代表你同時聽主流與小眾歌曲;越低代表你的聆聽集中在某個知名度區間(例如只聽超熱門或只聽冷門歌曲)。</p>
+  </div>
+
+  <div id="genre-view" style="display:none;">
+    <h2>【維度三】依流派分組 (iTunes / Spotify)</h2>
+    <div class="genre-block" id="genre-bars"></div>
+    <h3>Shannon Entropy(流派多元度)</h3>
+    <div class="entropy-result" id="genre-entropy-result"></div>
+    <p class="entropy-explain">Entropy 越高代表你聽的音樂類型越豐富多元;越低代表你偏好特定的少數流派。</p>
   </div>
 
   <script src="app.js"></script>
