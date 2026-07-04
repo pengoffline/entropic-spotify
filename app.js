@@ -134,19 +134,28 @@ async function fetchRecentlyPlayed(token) {
   const tracks = data.items.map(item => item.track);
 
   // 蒐集所有出現過的 artist id(去重複),genre 掛在 artist 身上
+  // 注意:Spotify 於 2026年2月移除了批次查詢端點 GET /v1/artists,
+  // 現在只能用 GET /v1/artists/{id} 一個一個查詢
   const artistIds = [...new Set(tracks.map(t => t.artists[0].id))];
   const artistGenreMap = {};
 
-  for (let i = 0; i < artistIds.length; i += 50) {
-    const batch = artistIds.slice(i, i + 50);
-    const artistRes = await fetch(
-      `https://api.spotify.com/v1/artists?ids=${batch.join(",")}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const artistData = await artistRes.json();
-    artistData.artists.forEach(artist => {
-      artistGenreMap[artist.id] = artist.genres;
-    });
+  for (const artistId of artistIds) {
+    try {
+      const artistRes = await fetch(
+        `https://api.spotify.com/v1/artists/${artistId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!artistRes.ok) {
+        console.warn(`抓取歌手 ${artistId} 失敗`, artistRes.status);
+        artistGenreMap[artistId] = [];
+        continue;
+      }
+      const artist = await artistRes.json();
+      artistGenreMap[artistId] = artist.genres || [];
+    } catch (err) {
+      console.warn(`抓取歌手 ${artistId} 發生例外`, err);
+      artistGenreMap[artistId] = [];
+    }
   }
 
   renderTracks(tracks, artistGenreMap);
