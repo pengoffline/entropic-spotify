@@ -4,7 +4,7 @@
 const clientId = "18a7af28818a40abafa707e98e4d7a48";
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
 
-// 需要的權限:個人資料 + 最近聆聽紀錄
+// 需要的權限:個人資料 + 使用者最常聽曲目
 const scope = "user-read-private user-read-email user-read-recently-played";
 
 // ========================================
@@ -26,6 +26,42 @@ async function generateCodeChallenge(codeVerifier) {
     .replace(/=/g, "")
     .replace(/\+/g, "-")
     .replace(/\//g, "_");
+}
+
+// ========================================
+// JSONP 工具函式(讓純前端網站也能呼叫不支援 CORS 的 API)
+// 原理:動態插入 <script> 標籤,瀏覽器對 <script src> 沒有同源限制
+// ========================================
+let jsonpCounter = 0;
+function jsonp(url, callbackParamName = "callback", timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `jsonp_cb_${Date.now()}_${jsonpCounter++}`;
+    const script = document.createElement("script");
+
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+      clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("JSONP 請求逾時"));
+    }, timeoutMs);
+
+    window[callbackName] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+
+    const separator = url.includes("?") ? "&" : "?";
+    script.src = `${url}${separator}${callbackParamName}=${callbackName}`;
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("JSONP 請求失敗"));
+    };
+    document.body.appendChild(script);
+  });
 }
 
 // ========================================
@@ -109,7 +145,7 @@ function setupRangeButtons() {
       fetchTopTracks(currentToken, btn.dataset.range);
     });
     if (btn.dataset.range === "medium_term") {
-      btn.classList.add("active"); // 預設選中的按鈕
+      btn.classList.add("active");
     }
   });
 }
@@ -140,12 +176,12 @@ async function fetchProfile(token) {
 }
 
 // ========================================
-// 抓取「最常聽」曲目(依時間範圍) + 歌手流派
+// 抓取「最常聽」曲目(依時間範圍)
 // time_range: short_term(約4週) / medium_term(約6個月) / long_term(約數年)
 // ========================================
 async function fetchTopTracks(token, timeRange) {
   const container = document.getElementById("track-list");
-  container.innerHTML = "<p style='color:#999;'>載入中...</p>";
+  container.innerHTML = "<p style='color:#999;'>載入中,請稍候(需要查詢外部音樂資料庫,約需 30-60 秒)...</p>";
 
   const res = await fetch(
     `https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=50`,
@@ -159,13 +195,11 @@ async function fetchTopTracks(token, timeRange) {
   }
 
   const data = await res.json();
-  const tracks = data.items; // top/tracks 回傳的就是曲目本身,不像 recently-played 要多包一層 item.track
+  const tracks = data.items;
 
-  // 蒐集所有出現過的 artist id(去重複),genre 掛在 artist 身上
-  // 注意:Spotify 於 2026年2月移除了批次查詢端點 GET /v1/artists,
-  // 現在只能用 GET /v1/artists/{id} 一個一個查詢
+  // ---- 1) Spotify 歌手流派(當作備援來源,常常是空的)----
   const artistIds = [...new Set(tracks.map(t => t.artists[0].id))];
-  const artistGenreMap = {};
+  const spotifyGenreMap = {};
 
   for (const artistId of artistIds) {
     try {
@@ -174,44 +208,101 @@ async function fetchTopTracks(token, timeRange) {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!artistRes.ok) {
-        console.warn(`抓取歌手 ${artistId} 失敗`, artistRes.status);
-        artistGenreMap[artistId] = [];
+        spotifyGenreMap[artistId] = [];
         continue;
       }
       const artist = await artistRes.json();
-      artistGenreMap[artistId] = artist.genres || [];
+      spotifyGenreMap[artistId] = artist.genres || [];
     } catch (err) {
-      console.warn(`抓取歌手 ${artistId} 發生例外`, err);
-      artistGenreMap[artistId] = [];
+      spotifyGenreMap[artistId] = [];
     }
   }
 
-  renderTracks(tracks, artistGenreMap);
+  // ---- 2) 逐首曲目查詢 Deezer(知名度 rank) + iTunes(流派)----
+  const enrichedTracks = [];
+  for (const track of tracks) {
+    const artistName = track.artists[0].name;
+    const trackName = track.name;
+
+    const [deezerRank, itunesGenre] = await Promise.all([
+      fetchDeezerRank(trackName, artistName),
+      fetchItunesGenre(trackName, artistName),
+    ]);
+
+    const spotifyGenres = spotifyGenreMap[track.artists[0].id] || [];
+    const finalGenre = itunesGenre || (spotifyGenres.length > 0 ? spotifyGenres[0] : null);
+
+    enrichedTracks.push({
+      track,
+      fameRank: deezerRank, // number 或 null
+      genre: finalGenre,    // string 或 null
+    });
+
+    // 更新載入畫面的進度提示
+    container.innerHTML = `<p style='color:#999;'>查詢中... (${enrichedTracks.length}/${tracks.length})</p>`;
+  }
+
+  renderTracks(enrichedTracks);
   renderDecadeAnalysis(tracks);
+  renderFameAnalysis(enrichedTracks);
+  renderGenreAnalysis(enrichedTracks);
 }
 
 // ========================================
-// 顯示曲目清單(含發行年份 / 流行度 / 流派)
+// Deezer:用曲名+歌手名查詢,取得 rank(知名度分數,数值越大越紅)
+// 免費、不需要 API key,但不支援 CORS,所以用 JSONP 繞過
 // ========================================
-function renderTracks(tracks, artistGenreMap) {
+async function fetchDeezerRank(trackName, artistName) {
+  try {
+    const query = encodeURIComponent(`artist:"${artistName}" track:"${trackName}"`);
+    const url = `https://api.deezer.com/search/track?q=${query}&output=jsonp`;
+    const data = await jsonp(url);
+    if (data && data.data && data.data.length > 0) {
+      return data.data[0].rank ?? null;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`Deezer 查詢失敗: ${artistName} - ${trackName}`, err.message);
+    return null;
+  }
+}
+
+// ========================================
+// iTunes Search API:用曲名+歌手名查詢,取得 primaryGenreName
+// 免費、不需要 API key,支援 JSONP callback
+// ========================================
+async function fetchItunesGenre(trackName, artistName) {
+  try {
+    const term = encodeURIComponent(`${artistName} ${trackName}`);
+    const url = `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=1`;
+    const data = await jsonp(url);
+    if (data && data.results && data.results.length > 0) {
+      return data.results[0].primaryGenreName || null;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`iTunes 查詢失敗: ${artistName} - ${trackName}`, err.message);
+    return null;
+  }
+}
+
+// ========================================
+// 顯示曲目清單(含發行年份 / 知名度 / 流派)
+// ========================================
+function renderTracks(enrichedTracks) {
   const container = document.getElementById("track-list");
   document.getElementById("history-view").style.display = "block";
   container.innerHTML = "";
 
-  // 說明性註記:Spotify 於 2026年2月起,對新申請的開發者帳號移除了
-  // track.popularity 欄位,且 artist.genres 資料本身也常常是空的(Spotify 資料品質問題)。
-  // 這裡誠實顯示「無資料」而不是硬做假數據。
   const note = document.createElement("p");
   note.className = "no-data-note";
-  note.textContent = "註:流行度欄位已被 Spotify 官方於個人開發者帳號中移除;部分歌手的流派資料 Spotify 本身也未提供分類。";
+  note.textContent = "註:知名度來自 Deezer 的 rank 分數,流派優先採用 iTunes 資料庫,查無資料時退回 Spotify 分類(Spotify 原生流行度欄位已被官方停止提供)。";
   container.appendChild(note);
 
-  tracks.forEach(track => {
+  enrichedTracks.forEach(({ track, fameRank, genre }) => {
     const releaseYear = track.album.release_date?.split("-")[0] || "未知";
-    const popularityText = (typeof track.popularity === "number") ? `${track.popularity}/100` : "無資料";
-    const mainArtistId = track.artists[0].id;
-    const genres = artistGenreMap[mainArtistId];
-    const genreText = genres && genres.length > 0 ? genres.join(", ") : "無資料";
+    const fameText = (typeof fameRank === "number") ? fameRank.toLocaleString() : "無資料";
+    const genreText = genre || "無資料";
 
     const item = document.createElement("div");
     item.className = "track-item";
@@ -219,7 +310,7 @@ function renderTracks(tracks, artistGenreMap) {
       <img src="${track.album.images[2]?.url || track.album.images[0]?.url}" width="60" height="60">
       <div>
         <strong>${track.name}</strong> - ${track.artists.map(a => a.name).join(", ")}<br>
-        <small>發行年份: ${releaseYear} ｜ 流行度: ${popularityText} ｜ 流派: ${genreText}</small>
+        <small>發行年份: ${releaseYear} ｜ 知名度(Deezer rank): ${fameText} ｜ 流派: ${genreText}</small>
       </div>
     `;
     container.appendChild(item);
@@ -227,20 +318,9 @@ function renderTracks(tracks, artistGenreMap) {
 }
 
 // ========================================
-// 依年代分組 (1960s ~ 2020s) + Shannon Entropy
+// 通用工具:計算 Shannon Entropy 與畫長條圖
+// H = -Σ p_i * log2(p_i)
 // ========================================
-
-// 把發行年份轉換成所屬年代標籤,例如 1975 -> "1970s"
-// 超出 1960-2020 範圍的歸類到 "其他"
-function getDecadeLabel(releaseDate) {
-  if (!releaseDate) return "其他";
-  const year = parseInt(releaseDate.split("-")[0], 10);
-  if (isNaN(year) || year < 1960 || year >= 2030) return "其他";
-  const decadeStart = Math.floor(year / 10) * 10;
-  return `${decadeStart}s`;
-}
-
-// 計算 Shannon Entropy: H = -Σ p_i * log2(p_i)
 function calculateShannonEntropy(counts) {
   const total = Object.values(counts).reduce((sum, c) => sum + c, 0);
   if (total === 0) return 0;
@@ -254,38 +334,19 @@ function calculateShannonEntropy(counts) {
   return entropy;
 }
 
-function renderDecadeAnalysis(tracks) {
-  const decadeOrder = ["1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"];
-
-  // 初始化計數
-  const counts = {};
-  decadeOrder.forEach(d => (counts[d] = 0));
-  let otherCount = 0;
-
-  tracks.forEach(track => {
-    const label = getDecadeLabel(track.album.release_date);
-    if (label === "其他") {
-      otherCount++;
-    } else {
-      counts[label]++;
-    }
-  });
-
-  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
-
-  // ---- 畫長條圖 (純 HTML/CSS,不需額外套件) ----
-  const barsContainer = document.getElementById("decade-bars");
+function renderBarChart(containerId, counts, orderedLabels) {
+  const barsContainer = document.getElementById(containerId);
   barsContainer.innerHTML = "";
   const maxCount = Math.max(...Object.values(counts), 1);
 
-  decadeOrder.forEach(decade => {
-    const count = counts[decade];
+  orderedLabels.forEach(label => {
+    const count = counts[label] || 0;
     const widthPercent = (count / maxCount) * 100;
 
     const row = document.createElement("div");
     row.className = "bar-row";
     row.innerHTML = `
-      <div class="bar-label">${decade}</div>
+      <div class="bar-label">${label}</div>
       <div class="bar-track">
         <div class="bar-fill" style="width:${widthPercent}%;"></div>
       </div>
@@ -293,29 +354,128 @@ function renderDecadeAnalysis(tracks) {
     `;
     barsContainer.appendChild(row);
   });
+}
+
+// ========================================
+// 【維度一】依年代分組 (1960s ~ 2020s) + Shannon Entropy
+// ========================================
+function getDecadeLabel(releaseDate) {
+  if (!releaseDate) return "其他";
+  const year = parseInt(releaseDate.split("-")[0], 10);
+  if (isNaN(year) || year < 1960 || year >= 2030) return "其他";
+  const decadeStart = Math.floor(year / 10) * 10;
+  return `${decadeStart}s`;
+}
+
+function renderDecadeAnalysis(tracks) {
+  const decadeOrder = ["1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"];
+  const counts = {};
+  decadeOrder.forEach(d => (counts[d] = 0));
+  let otherCount = 0;
+
+  tracks.forEach(track => {
+    const label = getDecadeLabel(track.album.release_date);
+    if (label === "其他") otherCount++;
+    else counts[label]++;
+  });
+
+  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
+  renderBarChart("decade-bars", counts, decadeOrder);
 
   if (otherCount > 0) {
+    const barsContainer = document.getElementById("decade-bars");
+    const maxCount = Math.max(...Object.values(counts), 1);
     const row = document.createElement("div");
     row.className = "bar-row";
     row.innerHTML = `
       <div class="bar-label">其他</div>
-      <div class="bar-track">
-        <div class="bar-fill" style="width:${(otherCount / maxCount) * 100}%; background:#666;"></div>
-      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(otherCount / maxCount) * 100}%; background:#666;"></div></div>
       <div class="bar-count">${otherCount}</div>
     `;
     barsContainer.appendChild(row);
   }
 
-  // ---- 計算並顯示 Shannon Entropy (只計算 1960s-2020s 分類內的曲目) ----
   const entropy = calculateShannonEntropy(counts);
-  const maxPossibleEntropy = Math.log2(decadeOrder.length); // 若均勻分布在7個年代的理論最大值
+  const maxPossibleEntropy = Math.log2(decadeOrder.length);
 
   document.getElementById("decade-view").style.display = "block";
-  document.getElementById("entropy-result").innerHTML = `
+  document.getElementById("decade-entropy-result").innerHTML = `
     H = ${entropy.toFixed(4)} bits
     <span style="color:#999; font-weight:normal; font-size:14px;">
-      (最大可能值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""})
+      (最大值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""})
+    </span>
+  `;
+}
+
+// ========================================
+// 【維度二】依知名度分組(Deezer rank) + Shannon Entropy
+// 分級門檻是依 Deezer rank 概略估計,非官方公告的絕對標準
+// ========================================
+function getFameLabel(rank) {
+  if (typeof rank !== "number") return "無資料";
+  if (rank >= 800000) return "超級主流";
+  if (rank >= 400000) return "主流";
+  if (rank >= 100000) return "中度知名";
+  if (rank >= 10000) return "小眾";
+  return "極小眾";
+}
+
+function renderFameAnalysis(enrichedTracks) {
+  const fameOrder = ["極小眾", "小眾", "中度知名", "主流", "超級主流"];
+  const counts = {};
+  fameOrder.forEach(f => (counts[f] = 0));
+  let noDataCount = 0;
+
+  enrichedTracks.forEach(({ fameRank }) => {
+    const label = getFameLabel(fameRank);
+    if (label === "無資料") noDataCount++;
+    else counts[label]++;
+  });
+
+  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
+  renderBarChart("fame-bars", counts, fameOrder);
+
+  const entropy = calculateShannonEntropy(counts);
+  const maxPossibleEntropy = Math.log2(fameOrder.length);
+
+  document.getElementById("fame-view").style.display = "block";
+  document.getElementById("fame-entropy-result").innerHTML = `
+    H = ${entropy.toFixed(4)} bits
+    <span style="color:#999; font-weight:normal; font-size:14px;">
+      (最大值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""})
+    </span>
+  `;
+}
+
+// ========================================
+// 【維度三】依流派分組(iTunes / Spotify) + Shannon Entropy
+// 流派種類因人而異,不用固定清單,動態統計實際出現的流派
+// ========================================
+function renderGenreAnalysis(enrichedTracks) {
+  const counts = {};
+  let noDataCount = 0;
+
+  enrichedTracks.forEach(({ genre }) => {
+    if (!genre) {
+      noDataCount++;
+      return;
+    }
+    counts[genre] = (counts[genre] || 0) + 1;
+  });
+
+  const genreOrder = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  renderBarChart("genre-bars", counts, genreOrder);
+
+  const entropy = calculateShannonEntropy(counts);
+  const maxPossibleEntropy = genreOrder.length > 0 ? Math.log2(genreOrder.length) : 0;
+
+  document.getElementById("genre-view").style.display = "block";
+  document.getElementById("genre-entropy-result").innerHTML = `
+    H = ${entropy.toFixed(4)} bits
+    <span style="color:#999; font-weight:normal; font-size:14px;">
+      (最大值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${genreOrder.length} 種流派、${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""})
     </span>
   `;
 }
