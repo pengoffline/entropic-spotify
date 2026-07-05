@@ -5,7 +5,7 @@ const clientId = "18a7af28818a40abafa707e98e4d7a48";
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
 
 // 需要的權限:個人資料 + 使用者最常聽曲目
-const scope = "user-read-private user-read-email user-read-recently-played";
+const scope = "user-read-private user-read-email user-read-recently-played user-top-read";
 
 // ========================================
 // PKCE 工具函式
@@ -225,7 +225,7 @@ async function fetchTopTracks(token, timeRange) {
     const trackName = track.name;
 
     const [deezerRank, itunesGenre] = await Promise.all([
-      fetchDeezerRank(trackName, artistName),
+      fetchDeezerRank(trackName, artistName, track.external_ids?.isrc),
       fetchItunesGenre(trackName, artistName),
     ]);
 
@@ -249,10 +249,25 @@ async function fetchTopTracks(token, timeRange) {
 }
 
 // ========================================
-// Deezer:用曲名+歌手名查詢,取得 rank(知名度分數,数值越大越紅)
+// Deezer:優先用 ISRC(國際標準錄音代碼)做精確比對,
+// 查無 ISRC 或查詢失敗時,才退回用曲名+歌手名模糊搜尋
 // 免費、不需要 API key,但不支援 CORS,所以用 JSONP 繞過
 // ========================================
-async function fetchDeezerRank(trackName, artistName) {
+async function fetchDeezerRank(trackName, artistName, isrc) {
+  // 優先:ISRC 精確查詢
+  if (isrc) {
+    try {
+      const url = `https://api.deezer.com/track/isrc:${isrc}?output=jsonp`;
+      const data = await jsonp(url);
+      if (data && typeof data.rank === "number") {
+        return data.rank;
+      }
+    } catch (err) {
+      console.warn(`Deezer ISRC 查詢失敗: ${isrc}`, err.message);
+    }
+  }
+
+  // 備援:曲名+歌手名模糊搜尋
   try {
     const query = encodeURIComponent(`artist:"${artistName}" track:"${trackName}"`);
     const url = `https://api.deezer.com/search/track?q=${query}&output=jsonp`;
@@ -262,7 +277,7 @@ async function fetchDeezerRank(trackName, artistName) {
     }
     return null;
   } catch (err) {
-    console.warn(`Deezer 查詢失敗: ${artistName} - ${trackName}`, err.message);
+    console.warn(`Deezer 曲名搜尋失敗: ${artistName} - ${trackName}`, err.message);
     return null;
   }
 }
