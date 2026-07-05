@@ -226,7 +226,7 @@ async function fetchTopTracks(token, timeRange) {
 
     const [deezerRank, itunesGenre] = await Promise.all([
       fetchDeezerRank(trackName, artistName, track.external_ids?.isrc),
-      fetchItunesGenre(trackName, artistName),
+      throttledFetchItunesGenre(trackName, artistName),
     ]);
 
     const spotifyGenres = spotifyGenreMap[track.artists[0].id] || [];
@@ -283,9 +283,23 @@ async function fetchDeezerRank(trackName, artistName, isrc) {
 }
 
 // ========================================
-// iTunes Search API:用曲名+歌手名查詢,取得 primaryGenreName
-// 免費、不需要 API key,支援 JSONP callback
+// 簡單的延遲工具 + iTunes 請求節流器
+// iTunes Search API 限制約每分鐘20次,這裡控制在每3.5秒最多1次(約17次/分鐘,留安全餘裕)
 // ========================================
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+let lastItunesCallTime = 0;
+const ITUNES_MIN_INTERVAL_MS = 3500;
+
+async function throttledFetchItunesGenre(trackName, artistName) {
+  const now = Date.now();
+  const waitTime = Math.max(0, lastItunesCallTime + ITUNES_MIN_INTERVAL_MS - now);
+  if (waitTime > 0) await sleep(waitTime);
+  lastItunesCallTime = Date.now();
+  return fetchItunesGenre(trackName, artistName);
+}
 async function fetchItunesGenre(trackName, artistName) {
   try {
     const term = encodeURIComponent(`${artistName} ${trackName}`);
