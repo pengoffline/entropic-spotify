@@ -1,11 +1,11 @@
 // ========================================
 // 基本設定
-// ======================================== 
-const clientId = "18a7af28818a40abafa707e98e4d7a48"; 
+// ========================================
+const clientId = "18a7af28818a40abafa707e98e4d7a48";
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
 
 // 需要的權限:個人資料 + 使用者最常聽曲目
-const scope = "user-read-private user-read-email user-read-recently-played user-top-read";
+const scope = "user-read-private user-read-recently-played user-top-read";
 
 // ========================================
 // PKCE 工具函式
@@ -175,7 +175,6 @@ async function fetchProfile(token) {
   document.getElementById("login-view").style.display = "none";
   document.getElementById("profile-view").style.display = "flex";
   document.getElementById("display-name-title").textContent = `你好, ${profile.display_name}`;
-  document.getElementById("email").textContent = profile.email || "無公開 email";
   if (profile.images?.[0]) {
     document.getElementById("avatar").src = profile.images[0].url;
   }
@@ -218,9 +217,6 @@ async function fetchTopTracks(token, timeRange) {
     document.getElementById("global-loading").style.display = "none";
     return;
   }
-
-  // 先抓 Deezer 完整流派清單,當作 entropy 的固定分母
-  const fixedGenreList = await fetchDeezerGenreList();
 
   const data = await res.json();
   const tracks = data.items;
@@ -284,40 +280,6 @@ async function fetchTopTracks(token, timeRange) {
   renderDecadeAnalysis(tracks);
   renderFameAnalysis(enrichedTracks);
   renderGenreAnalysis(enrichedTracks);
-}
-
-// ========================================
-// 取得 Deezer 完整流派清單(只需抓一次,快取起來)
-// 這份清單會當作流派 entropy 的「固定分母」,
-// 而不是只用使用者實際聽過的流派種類數(這樣不同人才能公平比較)
-// ========================================
-let deezerGenreListCache = null;
-
-async function fetchDeezerGenreList() {
-  if (deezerGenreListCache) return deezerGenreListCache;
-  try {
-    const data = await jsonp("https://api.deezer.com/genre?output=jsonp");
-    if (data && data.data) {
-      // 排除 "All" 這個萬用統包分類,只留實際的流派
-      deezerGenreListCache = data.data
-        .map(g => g.name)
-        .filter(name => name && name.toLowerCase() !== "all");
-
-      // 印到 console,方便你自己核對(這是即時抓取的真實資料,不是我憑印象列的)
-      console.log(`Deezer 目前共有 ${deezerGenreListCache.length} 種流派:`, deezerGenreListCache);
-
-      const listEl = document.getElementById("deezer-genre-full-list");
-      if (listEl) {
-        listEl.textContent = `共 ${deezerGenreListCache.length} 種: ${deezerGenreListCache.join("、")}`;
-      }
-    } else {
-      deezerGenreListCache = [];
-    }
-  } catch (err) {
-    console.warn("抓取 Deezer 流派清單失敗", err.message);
-    deezerGenreListCache = [];
-  }
-  return deezerGenreListCache;
 }
 
 // ========================================
