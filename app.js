@@ -1,7 +1,7 @@
 // ========================================
 // 基本設定
 // ========================================
-const clientId = "18a7af28818a40abafa707e98e4d7a48"; 
+const clientId = "18a7af28818a40abafa707e98e4d7a48";
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
 
 // 需要的權限:個人資料 + 使用者最常聽曲目
@@ -181,7 +181,7 @@ async function fetchProfile(token) {
 // ========================================
 async function fetchTopTracks(token, timeRange) {
   const container = document.getElementById("track-list");
-  container.innerHTML = "<p style='color:#999;'>載入中,請稍候(需要查詢外部音樂資料庫,約需 30-60 秒)...</p>";
+  container.innerHTML = "<p style='color:#999;'>載入中,請稍候(正在查詢 Deezer 資料庫)...</p>";
 
   const res = await fetch(
     `https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=50`,
@@ -218,27 +218,37 @@ async function fetchTopTracks(token, timeRange) {
     }
   }
 
-  // ---- 2) 逐首曲目查詢 Deezer(知名度 rank) + iTunes(流派)----
+  // ---- 2) 逐首曲目查詢 Deezer(知名度 rank + 專輯流派,同專輯共用快取)----
+  const albumGenreCache = {}; // albumId -> genre string 或 null,避免同專輯重複查詢
   const enrichedTracks = [];
   for (const track of tracks) {
     const artistName = track.artists[0].name;
     const trackName = track.name;
 
-    const [deezerRank, itunesGenre] = await Promise.all([
-      fetchDeezerRank(trackName, artistName, track.external_ids?.isrc),
-      throttledFetchItunesGenre(trackName, artistName),
-    ]);
+    const deezerData = await fetchDeezerData(trackName, artistName, track.external_ids?.isrc);
 
-    const spotifyGenres = spotifyGenreMap[track.artists[0].id] || [];
-    const finalGenre = itunesGenre || (spotifyGenres.length > 0 ? spotifyGenres[0] : null);
+    let genre = null;
+    if (deezerData?.albumId) {
+      if (deezerData.albumId in albumGenreCache) {
+        genre = albumGenreCache[deezerData.albumId];
+      } else {
+        genre = await fetchDeezerAlbumGenre(deezerData.albumId);
+        albumGenreCache[deezerData.albumId] = genre;
+      }
+    }
+
+    // Deezer 查無流派時,退回 Spotify 的歌手分類(常常是空的,但聊勝於無)
+    if (!genre) {
+      const spotifyGenres = spotifyGenreMap[track.artists[0].id] || [];
+      genre = spotifyGenres.length > 0 ? spotifyGenres[0] : null;
+    }
 
     enrichedTracks.push({
       track,
-      fameRank: deezerRank, // number 或 null
-      genre: finalGenre,    // string 或 null
+      fameRank: deezerData?.rank ?? null,
+      genre,
     });
 
-    // 更新載入畫面的進度提示
     container.innerHTML = `<p style='color:#999;'>查詢中... (${enrichedTracks.length}/${tracks.length})</p>`;
   }
 
@@ -251,16 +261,17 @@ async function fetchTopTracks(token, timeRange) {
 // ========================================
 // Deezer:優先用 ISRC(國際標準錄音代碼)做精確比對,
 // 查無 ISRC 或查詢失敗時,才退回用曲名+歌手名模糊搜尋
+// 回傳 { rank, albumId },查無資料回傳 null
 // 免費、不需要 API key,但不支援 CORS,所以用 JSONP 繞過
 // ========================================
-async function fetchDeezerRank(trackName, artistName, isrc) {
+async function fetchDeezerData(trackName, artistName, isrc) {
   // 優先:ISRC 精確查詢
   if (isrc) {
     try {
       const url = `https://api.deezer.com/track/isrc:${isrc}?output=jsonp`;
       const data = await jsonp(url);
       if (data && typeof data.rank === "number") {
-        return data.rank;
+        return { rank: data.rank, albumId: data.album?.id ?? null };
       }
     } catch (err) {
       console.warn(`Deezer ISRC 查詢失敗: ${isrc}`, err.message);
@@ -273,7 +284,8 @@ async function fetchDeezerRank(trackName, artistName, isrc) {
     const url = `https://api.deezer.com/search/track?q=${query}&output=jsonp`;
     const data = await jsonp(url);
     if (data && data.data && data.data.length > 0) {
-      return data.data[0].rank ?? null;
+      const match = data.data[0];
+      return { rank: match.rank ?? null, albumId: match.album?.id ?? null };
     }
     return null;
   } catch (err) {
@@ -283,34 +295,18 @@ async function fetchDeezerRank(trackName, artistName, isrc) {
 }
 
 // ========================================
-// 簡單的延遲工具 + iTunes 請求節流器
-// iTunes Search API 限制約每分鐘20次,這裡控制在每3.5秒最多1次(約17次/分鐘,留安全餘裕)
+// Deezer:用專輯 ID 查詢該專輯的流派分類
 // ========================================
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-let lastItunesCallTime = 0;
-const ITUNES_MIN_INTERVAL_MS = 3500;
-
-async function throttledFetchItunesGenre(trackName, artistName) {
-  const now = Date.now();
-  const waitTime = Math.max(0, lastItunesCallTime + ITUNES_MIN_INTERVAL_MS - now);
-  if (waitTime > 0) await sleep(waitTime);
-  lastItunesCallTime = Date.now();
-  return fetchItunesGenre(trackName, artistName);
-}
-async function fetchItunesGenre(trackName, artistName) {
+async function fetchDeezerAlbumGenre(albumId) {
   try {
-    const term = encodeURIComponent(`${artistName} ${trackName}`);
-    const url = `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=1`;
+    const url = `https://api.deezer.com/album/${albumId}?output=jsonp`;
     const data = await jsonp(url);
-    if (data && data.results && data.results.length > 0) {
-      return data.results[0].primaryGenreName || null;
+    if (data && data.genres && data.genres.data && data.genres.data.length > 0) {
+      return data.genres.data[0].name;
     }
     return null;
   } catch (err) {
-    console.warn(`iTunes 查詢失敗: ${artistName} - ${trackName}`, err.message);
+    console.warn(`Deezer 專輯流派查詢失敗: album ${albumId}`, err.message);
     return null;
   }
 }
@@ -325,7 +321,7 @@ function renderTracks(enrichedTracks) {
 
   const note = document.createElement("p");
   note.className = "no-data-note";
-  note.textContent = "註:知名度來自 Deezer 的 rank 分數,流派優先採用 iTunes 資料庫,查無資料時退回 Spotify 分類(Spotify 原生流行度欄位已被官方停止提供)。";
+  note.textContent = "註:知名度與流派皆來自 Deezer(同專輯的歌曲共用查詢結果以加速);查無資料時退回 Spotify 分類(Spotify 原生流行度欄位已被官方停止提供)。";
   container.appendChild(note);
 
   enrichedTracks.forEach(({ track, fameRank, genre }) => {
