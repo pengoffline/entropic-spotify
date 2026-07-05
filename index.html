@@ -118,6 +118,11 @@
       max-height: 400px;
       overflow-y: auto;
     }
+    .entropy-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
     .summary-box {
       background: #1c1c1c;
       border: 1px solid #1DB954;
@@ -144,11 +149,15 @@
 
   <div id="taste-summary" class="summary-box" style="display:none;">
     <h2 style="margin-top:0;">🎧 音樂品味混亂程度</h2>
-    <div id="taste-summary-value" style="font-size:36px; font-weight:bold; color:#1DB954;"></div>
+    <div id="taste-summary-value" style="display:flex; justify-content:center; margin:12px 0;"></div>
     <p style="color:#999; font-size:13px; margin-bottom:0;">
       三個維度(年代 / 知名度 / 流派)正規化後 entropy 百分比的幾何平均。100% 代表在三個維度上都達到理論最大的隨機分散程度;越接近 0% 代表聆聽習慣越集中單一。
     </p>
     <div id="taste-summary-breakdown" style="margin-top:10px; font-size:14px; color:#ccc;"></div>
+  </div>
+
+  <div id="global-loading" style="display:none; color:#999; margin:16px 0; font-size:15px;">
+    ⏳ 載入中,正在分析你的音樂資料,請稍候...
   </div>
 
   <div id="history-view" style="display:none;">
