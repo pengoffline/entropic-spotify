@@ -380,8 +380,16 @@ function renderTracks(enrichedTracks) {
 
   enrichedTracks.forEach(({ track, fameRank, genre }) => {
     const releaseYear = track.album.release_date?.split("-")[0] || "未知";
-    const fameText = (typeof fameRank === "number") ? fameRank.toLocaleString() : "無資料";
-    const genreText = genre || "無資料";
+
+    // 知名度改顯示級距標籤(附上原始 rank 供參考)
+    const fameLabel = getFameLabel(fameRank);
+    const fameText = fameLabel === "無資料" ? "無資料" : `${fameLabel}(rank ${fameRank.toLocaleString()})`;
+
+    // 流派改顯示歸類後的12組,對照不到的顯示「其他」
+    let genreText = "無資料";
+    if (genre) {
+      genreText = GENRE_GROUP_MAP[genre] || "其他";
+    }
 
     const item = document.createElement("div");
     item.className = "track-item";
@@ -389,7 +397,7 @@ function renderTracks(enrichedTracks) {
       <img src="${track.album.images[2]?.url || track.album.images[0]?.url}" width="60" height="60">
       <div>
         <strong>${track.name}</strong> - ${track.artists.map(a => a.name).join(", ")}<br>
-        <small>發行年份: ${releaseYear} ｜ 知名度(Deezer rank): ${fameText} ｜ 流派: ${genreText}</small>
+        <small>發行年份: ${releaseYear} ｜ 知名度: ${fameText} ｜ 流派: ${genreText}</small>
       </div>
     `;
     container.appendChild(item);
@@ -458,21 +466,25 @@ function renderBarChart(containerId, counts, orderedLabels) {
 }
 
 // ========================================
-// 品味混亂程度:三個維度正規化 entropy 百分比的幾何平均
-// GM = (p1 × p2 × p3) ^ (1/3)
-// 每次任一維度算完就會呼叫這裡,等三個都有值才會真正顯示
+// 品味混亂程度:三個維度依各自的分類數量加權平均
+// 年代7組、知名度5組、流派12組,分類越細的維度權重越高
+// 綜合值 = (7×年代% + 5×知名度% + 12×流派%) / (7+5+12)
 // ========================================
 function renderTasteSummary() {
   const { decade, fame, genre } = entropyPercents;
   if (decade === null || fame === null || genre === null) return; // 還沒算齊三個,先不顯示
 
-  // 幾何平均對 0 特別敏感:只要有一個維度是 0%,結果就會是 0%
-  const geometricMean = Math.cbrt((decade / 100) * (fame / 100) * (genre / 100)) * 100;
+  const WEIGHT_DECADE = 7;
+  const WEIGHT_FAME = 5;
+  const WEIGHT_GENRE = 12;
+  const totalWeight = WEIGHT_DECADE + WEIGHT_FAME + WEIGHT_GENRE;
+
+  const weightedScore = (WEIGHT_DECADE * decade + WEIGHT_FAME * fame + WEIGHT_GENRE * genre) / totalWeight;
 
   document.getElementById("taste-summary").style.display = "block";
-  document.getElementById("taste-summary-value").innerHTML = generateCircularProgressSVG(geometricMean, 140, 14, "#1DB954");
+  document.getElementById("taste-summary-value").innerHTML = generateCircularProgressSVG(weightedScore, 140, 14, "#1DB954");
   document.getElementById("taste-summary-breakdown").innerHTML = `
-    年代多元度: ${decade.toFixed(1)}% ｜ 知名度多元度: ${fame.toFixed(1)}% ｜ 流派多元度: ${genre.toFixed(1)}%
+    年代多元度: ${decade.toFixed(1)}%(權重7) ｜ 知名度多元度: ${fame.toFixed(1)}%(權重5) ｜ 流派多元度: ${genre.toFixed(1)}%(權重12)
   `;
   document.getElementById("global-loading").style.display = "none";
 }
