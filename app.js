@@ -1,5 +1,5 @@
 // ========================================
-// 基本設定 
+// 基本設定
 // ========================================
 const clientId = "18a7af28818a40abafa707e98e4d7a48";
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
@@ -194,6 +194,9 @@ async function fetchTopTracks(token, timeRange) {
     return;
   }
 
+  // 先抓 Deezer 完整流派清單,當作 entropy 的固定分母
+  const fixedGenreList = await fetchDeezerGenreList();
+
   const data = await res.json();
   const tracks = data.items;
 
@@ -255,7 +258,33 @@ async function fetchTopTracks(token, timeRange) {
   renderTracks(enrichedTracks);
   renderDecadeAnalysis(tracks);
   renderFameAnalysis(enrichedTracks);
-  renderGenreAnalysis(enrichedTracks);
+  renderGenreAnalysis(enrichedTracks, fixedGenreList);
+}
+
+// ========================================
+// 取得 Deezer 完整流派清單(只需抓一次,快取起來)
+// 這份清單會當作流派 entropy 的「固定分母」,
+// 而不是只用使用者實際聽過的流派種類數(這樣不同人才能公平比較)
+// ========================================
+let deezerGenreListCache = null;
+
+async function fetchDeezerGenreList() {
+  if (deezerGenreListCache) return deezerGenreListCache;
+  try {
+    const data = await jsonp("https://api.deezer.com/genre?output=jsonp");
+    if (data && data.data) {
+      // 排除 "All" 這個萬用統包分類,只留實際的流派
+      deezerGenreListCache = data.data
+        .map(g => g.name)
+        .filter(name => name && name.toLowerCase() !== "all");
+    } else {
+      deezerGenreListCache = [];
+    }
+  } catch (err) {
+    console.warn("抓取 Deezer 流派清單失敗", err.message);
+    deezerGenreListCache = [];
+  }
+  return deezerGenreListCache;
 }
 
 // ========================================
@@ -473,34 +502,71 @@ function renderFameAnalysis(enrichedTracks) {
 }
 
 // ========================================
-// 【維度三】依流派分組(iTunes / Spotify) + Shannon Entropy
-// 流派種類因人而異,不用固定清單,動態統計實際出現的流派
+// 【維度三】依流派分組 + Shannon Entropy
+// 改用 Deezer 官方完整流派清單當固定分類(分母固定),
+// 而不是只算使用者實際聽過的流派種類數,這樣不同使用者之間才能公平比較
 // ========================================
-function renderGenreAnalysis(enrichedTracks) {
+function renderGenreAnalysis(enrichedTracks, fixedGenreList) {
+  // 如果連 Deezer 流派清單都抓不到(極端情況),退回舊的「動態分類」邏輯,至少還能顯示
+  if (!fixedGenreList || fixedGenreList.length === 0) {
+    const counts = {};
+    let noDataCount = 0;
+    enrichedTracks.forEach(({ genre }) => {
+      if (!genre) { noDataCount++; return; }
+      counts[genre] = (counts[genre] || 0) + 1;
+    });
+    const genreOrder = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    renderBarChart("genre-bars", counts, genreOrder);
+    const entropy = calculateShannonEntropy(counts);
+    const maxPossibleEntropy = genreOrder.length > 0 ? Math.log2(genreOrder.length) : 0;
+    document.getElementById("genre-view").style.display = "block";
+    document.getElementById("genre-entropy-result").innerHTML = `
+      H = ${entropy.toFixed(4)} bits
+      <span style="color:#999; font-weight:normal; font-size:14px;">
+        (⚠️ Deezer 流派清單抓取失敗,暫用動態分類,分母僅供參考。共 ${genreOrder.length} 種流派${noDataCount > 0 ? `,${noDataCount} 首查無資料未列入` : ""})
+      </span>
+    `;
+    return;
+  }
+
+  // ---- 正常情況:用 Deezer 官方完整流派清單當固定分類 ----
   const counts = {};
-  let noDataCount = 0;
+  fixedGenreList.forEach(g => (counts[g] = 0));
+  let otherCount = 0;   // 有查到流派,但不在 Deezer 官方清單裡(理論上少見)
+  let noDataCount = 0;  // 完全查無流派資料
 
   enrichedTracks.forEach(({ genre }) => {
     if (!genre) {
       noDataCount++;
       return;
     }
-    counts[genre] = (counts[genre] || 0) + 1;
+    if (genre in counts) {
+      counts[genre]++;
+    } else {
+      otherCount++;
+    }
   });
 
-  const genreOrder = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  renderBarChart("genre-bars", counts, genreOrder);
+  // 只顯示有出現過的流派長條(全部畫出來太長,但 entropy 分母仍用完整清單)
+  const nonZeroGenres = fixedGenreList
+    .filter(g => counts[g] > 0)
+    .sort((a, b) => counts[b] - counts[a]);
+  renderBarChart("genre-bars", counts, nonZeroGenres);
+
+  if (otherCount > 0) {
+    counts["其他"] = otherCount; // 併入 entropy 計算,但這個分類不在原本固定清單長度內,故不影響 maxPossibleEntropy
+  }
 
   const entropy = calculateShannonEntropy(counts);
-  const maxPossibleEntropy = genreOrder.length > 0 ? Math.log2(genreOrder.length) : 0;
+  const maxPossibleEntropy = Math.log2(fixedGenreList.length); // 固定分母!不隨個人聽的種類變動
 
   document.getElementById("genre-view").style.display = "block";
   document.getElementById("genre-entropy-result").innerHTML = `
     H = ${entropy.toFixed(4)} bits
     <span style="color:#999; font-weight:normal; font-size:14px;">
-      (最大值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${genreOrder.length} 種流派、${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""})
+      (最大值 ${maxPossibleEntropy.toFixed(4)} bits，以 Deezer 官方共 ${fixedGenreList.length} 種流派為固定分母，共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""})
     </span>
   `;
 }
