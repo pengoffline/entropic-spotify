@@ -129,6 +129,9 @@ let currentToken = null; // 存起來讓時間範圍按鈕可以重複呼叫 API
 // 三個維度正規化後的 entropy 百分比(0~100),算完幾何平均要用
 const entropyPercents = { decade: null, fame: null, genre: null };
 
+// 頂部總覽的四個補充統計欄位
+const quickStats = { avgYear: null, avgFameLabel: null, favoriteDecade: null, favoriteGenre: null };
+
 async function runAll(token) {
   currentToken = token;
   await fetchProfile(token);
@@ -187,6 +190,11 @@ async function fetchTopTracks(token, timeRange) {
   entropyPercents.decade = null;
   entropyPercents.fame = null;
   entropyPercents.genre = null;
+  quickStats.avgYear = null;
+  quickStats.avgFameLabel = null;
+  quickStats.favoriteDecade = null;
+  quickStats.favoriteGenre = null;
+  renderQuickStats();
   document.getElementById("taste-summary").style.display = "none";
   document.getElementById("decade-view").style.display = "none";
   document.getElementById("fame-view").style.display = "none";
@@ -466,6 +474,23 @@ function renderBarChart(containerId, counts, orderedLabels) {
 }
 
 // ========================================
+// 頂部總覽的四個補充統計欄位:
+// 平均年份 / 流行程度(依分組資料平均)/ 最愛年代(眾數) / 最愛類型(眾數)
+// 每個欄位各自獨立顯示,不用等三個維度都算完
+// ========================================
+function renderQuickStats() {
+  const el = document.getElementById("quick-stats");
+  if (!el) return;
+
+  el.innerHTML = `
+    <div class="quick-stat-item"><span class="quick-stat-label">平均年份</span><span class="quick-stat-value">${quickStats.avgYear ?? "—"}</span></div>
+    <div class="quick-stat-item"><span class="quick-stat-label">流行程度</span><span class="quick-stat-value">${quickStats.avgFameLabel ?? "—"}</span></div>
+    <div class="quick-stat-item"><span class="quick-stat-label">最愛年代</span><span class="quick-stat-value">${quickStats.favoriteDecade ?? "—"}</span></div>
+    <div class="quick-stat-item"><span class="quick-stat-label">最愛類型</span><span class="quick-stat-value">${quickStats.favoriteGenre ?? "—"}</span></div>
+  `;
+}
+
+// ========================================
 // 品味混亂程度:三個維度依各自的分類數量加權平均
 // 年代7組、知名度5組、流派12組,分類越細的維度權重越高
 // 綜合值 = (7×年代% + 5×知名度% + 12×流派%) / (7+5+12)
@@ -505,12 +530,31 @@ function renderDecadeAnalysis(tracks) {
   const counts = {};
   decadeOrder.forEach(d => (counts[d] = 0));
   let otherCount = 0;
+  let yearSum = 0;
+  let yearCount = 0;
 
   tracks.forEach(track => {
     const label = getDecadeLabel(track.album.release_date);
     if (label === "其他") otherCount++;
     else counts[label]++;
+
+    const year = parseInt(track.album.release_date?.split("-")[0], 10);
+    if (!isNaN(year)) {
+      yearSum += year;
+      yearCount++;
+    }
   });
+
+  // 平均年份(全部曲目,不限1960-2020區間)
+  if (yearCount > 0) {
+    quickStats.avgYear = (yearSum / yearCount).toFixed(1);
+  }
+
+  // 最愛年代:眾數(只在固定7個年代裡取,不含「其他」)
+  const maxDecadeCount = Math.max(...decadeOrder.map(d => counts[d]));
+  if (maxDecadeCount > 0) {
+    quickStats.favoriteDecade = decadeOrder.find(d => counts[d] === maxDecadeCount);
+  }
 
   const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
   renderBarChart("decade-bars", counts, decadeOrder);
@@ -547,6 +591,7 @@ function renderDecadeAnalysis(tracks) {
     </div>
   `;
   renderTasteSummary();
+  renderQuickStats();
 }
 
 // ========================================
@@ -555,24 +600,40 @@ function renderDecadeAnalysis(tracks) {
 // ========================================
 function getFameLabel(rank) {
   if (typeof rank !== "number") return "無資料";
-  if (rank >= 800000) return "超級主流";
-  if (rank >= 400000) return "主流";
-  if (rank >= 100000) return "中度知名";
-  if (rank >= 10000) return "小眾";
-  return "極小眾";
+  if (rank >= 750000) return "超夯";
+  if (rank >= 250000) return "主流";
+  if (rank >= 75000) return "普通";
+  if (rank >= 25000) return "小眾";
+  return "稀有";
 }
 
+const FAME_ORDER = ["稀有", "小眾", "普通", "主流", "超夯"];
+
 function renderFameAnalysis(enrichedTracks) {
-  const fameOrder = ["極小眾", "小眾", "中度知名", "主流", "超級主流"];
+  const fameOrder = FAME_ORDER;
   const counts = {};
   fameOrder.forEach(f => (counts[f] = 0));
   let noDataCount = 0;
+  let ordinalSum = 0;
+  let ordinalCount = 0;
 
   enrichedTracks.forEach(({ fameRank }) => {
     const label = getFameLabel(fameRank);
-    if (label === "無資料") noDataCount++;
-    else counts[label]++;
+    if (label === "無資料") {
+      noDataCount++;
+    } else {
+      counts[label]++;
+      ordinalSum += fameOrder.indexOf(label) + 1; // 1~5
+      ordinalCount++;
+    }
   });
+
+  // 依「分組後」的資料算平均流行程度,而不是直接平均原始 rank 數字
+  if (ordinalCount > 0) {
+    const avgOrdinal = Math.round(ordinalSum / ordinalCount);
+    const clamped = Math.min(fameOrder.length, Math.max(1, avgOrdinal));
+    quickStats.avgFameLabel = fameOrder[clamped - 1];
+  }
 
   const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
   renderBarChart("fame-bars", counts, fameOrder);
@@ -596,6 +657,7 @@ function renderFameAnalysis(enrichedTracks) {
     </div>
   `;
   renderTasteSummary();
+  renderQuickStats();
 }
 
 // ========================================
@@ -653,6 +715,12 @@ function renderGenreAnalysis(enrichedTracks) {
 
   const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
 
+  // 最愛類型:眾數(只在固定12組裡取,不含「其他」)
+  const maxGenreCount = Math.max(...GENRE_GROUP_ORDER.map(g => counts[g]));
+  if (maxGenreCount > 0) {
+    quickStats.favoriteGenre = GENRE_GROUP_ORDER.find(g => counts[g] === maxGenreCount);
+  }
+
   // 固定顯示全部12組,不管有沒有聽過
   renderBarChart("genre-bars", counts, GENRE_GROUP_ORDER);
 
@@ -689,4 +757,5 @@ function renderGenreAnalysis(enrichedTracks) {
     </div>
   `;
   renderTasteSummary();
+  renderQuickStats();
 }
