@@ -142,6 +142,15 @@
     </div>
   </div>
 
+  <div id="taste-summary" class="summary-box" style="display:none;">
+    <h2 style="margin-top:0;">🎧 音樂品味混亂程度</h2>
+    <div id="taste-summary-value" style="font-size:36px; font-weight:bold; color:#1DB954;"></div>
+    <p style="color:#999; font-size:13px; margin-bottom:0;">
+      三個維度(年代 / 知名度 / 流派)正規化後 entropy 百分比的幾何平均。100% 代表在三個維度上都達到理論最大的隨機分散程度;越接近 0% 代表聆聽習慣越集中單一。
+    </p>
+    <div id="taste-summary-breakdown" style="margin-top:10px; font-size:14px; color:#ccc;"></div>
+  </div>
+
   <div id="history-view" style="display:none;">
     <h2>聆聽紀錄</h2>
     <div id="time-range-selector" style="margin-bottom:16px;">
@@ -174,6 +183,10 @@
     <h3>Shannon Entropy(流派多元度)</h3>
     <div class="entropy-result" id="genre-entropy-result"></div>
     <p class="entropy-explain">Entropy 越高代表你聽的音樂類型越豐富多元;越低代表你偏好特定的少數流派。分母固定採用 Deezer 官方完整流派清單的種類數,不會因為你聽過的流派種類多寡而變動,不同時間、不同使用者之間都能公平比較。</p>
+    <details style="margin-top:8px;">
+      <summary style="cursor:pointer; color:#1DB954;">點此查看 Deezer 完整流派清單(即時抓取,非人工列表)</summary>
+      <p id="deezer-genre-full-list" style="color:#ccc; font-size:13px; margin-top:8px;"></p>
+    </details>
   </div>
 
   <script src="app.js"></script>
