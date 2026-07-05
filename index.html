@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-Hant"> 
+<html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -123,6 +123,30 @@
       align-items: center;
       gap: 16px;
     }
+    .quick-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .quick-stat-item {
+      background: #262626;
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+    }
+    .quick-stat-label {
+      display: block;
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 4px;
+    }
+    .quick-stat-value {
+      display: block;
+      font-size: 17px;
+      font-weight: bold;
+      color: #fff;
+    }
     .summary-box {
       background: #1c1c1c;
       border: 1px solid #1DB954;
@@ -149,9 +173,10 @@
 
   <div id="taste-summary" class="summary-box" style="display:none;">
     <h2 style="margin-top:0;">🎧 音樂品味混亂程度</h2>
+    <div id="quick-stats" class="quick-stats-grid"></div>
     <div id="taste-summary-value" style="display:flex; justify-content:center; margin:12px 0;"></div>
     <p style="color:#999; font-size:13px; margin-bottom:0;">
-      三個維度(年代 / 知名度 / 流派)正規化後 entropy 百分比的幾何平均。100% 代表在三個維度上都達到理論最大的隨機分散程度;越接近 0% 代表聆聽習慣越集中單一。
+      綜合值 = (7×年代多元度% + 5×知名度多元度% + 12×流派多元度%) ÷ 24,依各維度的分類細緻程度加權(流派12組權重最高,知名度5組權重最低)。100% 代表在三個維度上都達到理論最大的隨機分散程度;越接近 0% 代表聆聽習慣越集中單一。
     </p>
     <div id="taste-summary-breakdown" style="margin-top:10px; font-size:14px; color:#ccc;"></div>
   </div>
