@@ -2,7 +2,7 @@
 // 基本設定
 // ========================================
 const clientId = "18a7af28818a40abafa707e98e4d7a48";
-const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html"; 
+const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
 
 // 需要的權限:個人資料 + 使用者最常聽曲目
 const scope = "user-read-private user-read-email user-read-recently-played user-top-read";
@@ -188,6 +188,13 @@ async function fetchTopTracks(token, timeRange) {
   entropyPercents.fame = null;
   entropyPercents.genre = null;
   document.getElementById("taste-summary").style.display = "none";
+  document.getElementById("decade-view").style.display = "none";
+  document.getElementById("fame-view").style.display = "none";
+  document.getElementById("genre-view").style.display = "none";
+
+  // 立即顯示載入提示(修正原本訊息被藏在 display:none 容器裡看不到的問題)
+  document.getElementById("global-loading").style.display = "block";
+  document.getElementById("history-view").style.display = "block";
 
   const container = document.getElementById("track-list");
   container.innerHTML = "<p style='color:#999;'>載入中,請稍候(正在查詢 Deezer 資料庫)...</p>";
@@ -200,6 +207,7 @@ async function fetchTopTracks(token, timeRange) {
   if (!res.ok) {
     console.error("抓取最常聽曲目失敗", res.status);
     container.innerHTML = "<p style='color:#f66;'>抓取資料失敗,請稍後再試。</p>";
+    document.getElementById("global-loading").style.display = "none";
     return;
   }
 
@@ -267,7 +275,7 @@ async function fetchTopTracks(token, timeRange) {
   renderTracks(enrichedTracks);
   renderDecadeAnalysis(tracks);
   renderFameAnalysis(enrichedTracks);
-  renderGenreAnalysis(enrichedTracks, fixedGenreList);
+  renderGenreAnalysis(enrichedTracks);
 }
 
 // ========================================
@@ -405,6 +413,28 @@ function calculateShannonEntropy(counts) {
   return entropy;
 }
 
+// ========================================
+// 產生圓形進度條 SVG,percent: 0~100
+// ========================================
+function generateCircularProgressSVG(percent, size = 90, strokeWidth = 9, color = "#1DB954") {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clampedPercent = Math.max(0, Math.min(100, percent));
+  const offset = circumference - (clampedPercent / 100) * circumference;
+  const center = size / 2;
+
+  return `
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">
+      <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="#333" stroke-width="${strokeWidth}" />
+      <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${color}" stroke-width="${strokeWidth}"
+        stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"
+        transform="rotate(-90 ${center} ${center})" style="transition: stroke-dashoffset 0.6s ease;" />
+      <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#fff"
+        font-size="${size * 0.22}" font-weight="bold">${clampedPercent.toFixed(0)}%</text>
+    </svg>
+  `;
+}
+
 function renderBarChart(containerId, counts, orderedLabels) {
   const barsContainer = document.getElementById(containerId);
   barsContainer.innerHTML = "";
@@ -440,10 +470,11 @@ function renderTasteSummary() {
   const geometricMean = Math.cbrt((decade / 100) * (fame / 100) * (genre / 100)) * 100;
 
   document.getElementById("taste-summary").style.display = "block";
-  document.getElementById("taste-summary-value").textContent = `${geometricMean.toFixed(1)}%`;
+  document.getElementById("taste-summary-value").innerHTML = generateCircularProgressSVG(geometricMean, 140, 14, "#1DB954");
   document.getElementById("taste-summary-breakdown").innerHTML = `
     年代多元度: ${decade.toFixed(1)}% ｜ 知名度多元度: ${fame.toFixed(1)}% ｜ 流派多元度: ${genre.toFixed(1)}%
   `;
+  document.getElementById("global-loading").style.display = "none";
 }
 
 // ========================================
@@ -492,10 +523,16 @@ function renderDecadeAnalysis(tracks) {
 
   document.getElementById("decade-view").style.display = "block";
   document.getElementById("decade-entropy-result").innerHTML = `
-    ${percent.toFixed(1)}%
-    <span style="color:#999; font-weight:normal; font-size:14px;">
-      (H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""})
-    </span>
+    <div class="entropy-row">
+      ${generateCircularProgressSVG(percent, 90, 9)}
+      <div>
+        <div style="font-size:15px; color:#ccc;">年代多元度</div>
+        <span style="color:#999; font-size:13px;">
+          H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits<br>
+          共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""}
+        </span>
+      </div>
+    </div>
   `;
   renderTasteSummary();
 }
@@ -535,49 +572,58 @@ function renderFameAnalysis(enrichedTracks) {
 
   document.getElementById("fame-view").style.display = "block";
   document.getElementById("fame-entropy-result").innerHTML = `
-    ${percent.toFixed(1)}%
-    <span style="color:#999; font-weight:normal; font-size:14px;">
-      (H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits，共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""})
-    </span>
+    <div class="entropy-row">
+      ${generateCircularProgressSVG(percent, 90, 9)}
+      <div>
+        <div style="font-size:15px; color:#ccc;">知名度多元度</div>
+        <span style="color:#999; font-size:13px;">
+          H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits<br>
+          共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""}
+        </span>
+      </div>
+    </div>
   `;
   renderTasteSummary();
 }
 
 // ========================================
-// 【維度三】依流派分組 + Shannon Entropy
-// 改用 Deezer 官方完整流派清單當固定分類(分母固定),
-// 而不是只算使用者實際聽過的流派種類數,這樣不同使用者之間才能公平比較
+// 流派分組對照表:把 Deezer 原始流派歸類成 12 個固定大類
+// 對照不到的原始流派會歸入「其他」,entropy 分母仍固定是 12(不含其他)
 // ========================================
-function renderGenreAnalysis(enrichedTracks, fixedGenreList) {
-  // 如果連 Deezer 流派清單都抓不到(極端情況),退回舊的「動態分類」邏輯,至少還能顯示
-  if (!fixedGenreList || fixedGenreList.length === 0) {
-    const counts = {};
-    let noDataCount = 0;
-    enrichedTracks.forEach(({ genre }) => {
-      if (!genre) { noDataCount++; return; }
-      counts[genre] = (counts[genre] || 0) + 1;
-    });
-    const genreOrder = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-    renderBarChart("genre-bars", counts, genreOrder);
-    const entropy = calculateShannonEntropy(counts);
-    const maxPossibleEntropy = genreOrder.length > 0 ? Math.log2(genreOrder.length) : 0;
-    const percent = maxPossibleEntropy > 0 ? (entropy / maxPossibleEntropy) * 100 : 0;
-    entropyPercents.genre = percent;
-    document.getElementById("genre-view").style.display = "block";
-    document.getElementById("genre-entropy-result").innerHTML = `
-      ${percent.toFixed(1)}%
-      <span style="color:#999; font-weight:normal; font-size:14px;">
-        (⚠️ Deezer 流派清單抓取失敗,暫用動態分類,分母僅供參考。共 ${genreOrder.length} 種流派${noDataCount > 0 ? `,${noDataCount} 首查無資料未列入` : ""})
-      </span>
-    `;
-    renderTasteSummary();
-    return;
-  }
+const GENRE_GROUP_MAP = {
+  "Pop": "流行",
+  "Dance": "流行",
+  "Rap/Hip Hop": "嘻哈",
+  "Rock": "搖滾",
+  "Metal": "搖滾",
+  "R&B": "R&B",
+  "Soul & Funk": "R&B",
+  "Reggae": "R&B",
+  "Alternative": "另類",
+  "Electro": "電子",
+  "Folk": "民謠",
+  "Jazz": "爵士",
+  "Blues": "爵士",
+  "Classical": "古典",
+  "Asian Music": "亞洲",
+  "Indian Music": "亞洲",
+  "Latin Music": "世界",
+  "Brazilian Music": "世界",
+  "African Music": "世界",
+  "Films/Games": "配樂",
+};
 
-  // ---- 正常情況:用 Deezer 官方完整流派清單當固定分類 ----
+const GENRE_GROUP_ORDER = ["流行", "嘻哈", "搖滾", "R&B", "另類", "電子", "民謠", "爵士", "古典", "亞洲", "世界", "配樂"];
+
+// ========================================
+// 【維度三】依流派分組(固定12組) + Shannon Entropy
+// 不管使用者這次聽到哪些流派,一律顯示全部12組長條(沒聽過的顯示0),
+// entropy 分母固定是 log2(12),可跨時間、跨使用者公平比較
+// ========================================
+function renderGenreAnalysis(enrichedTracks) {
   const counts = {};
-  fixedGenreList.forEach(g => (counts[g] = 0));
-  let otherCount = 0;   // 有查到流派,但不在 Deezer 官方清單裡(理論上少見)
+  GENRE_GROUP_ORDER.forEach(g => (counts[g] = 0));
+  let otherCount = 0;   // 原始流派對照不到這12組的(理論上少見)
   let noDataCount = 0;  // 完全查無流派資料
 
   enrichedTracks.forEach(({ genre }) => {
@@ -585,8 +631,9 @@ function renderGenreAnalysis(enrichedTracks, fixedGenreList) {
       noDataCount++;
       return;
     }
-    if (genre in counts) {
-      counts[genre]++;
+    const group = GENRE_GROUP_MAP[genre];
+    if (group) {
+      counts[group]++;
     } else {
       otherCount++;
     }
@@ -594,27 +641,40 @@ function renderGenreAnalysis(enrichedTracks, fixedGenreList) {
 
   const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  // 只顯示有出現過的流派長條(全部畫出來太長,但 entropy 分母仍用完整清單)
-  const nonZeroGenres = fixedGenreList
-    .filter(g => counts[g] > 0)
-    .sort((a, b) => counts[b] - counts[a]); 
-  renderBarChart("genre-bars", counts, nonZeroGenres);
+  // 固定顯示全部12組,不管有沒有聽過
+  renderBarChart("genre-bars", counts, GENRE_GROUP_ORDER);
 
   if (otherCount > 0) {
-    counts["其他"] = otherCount; // 併入 entropy 計算,但這個分類不在原本固定清單長度內,故不影響 maxPossibleEntropy
+    const barsContainer = document.getElementById("genre-bars");
+    const maxCount = Math.max(...Object.values(counts), 1);
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <div class="bar-label">其他</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(otherCount / maxCount) * 100}%; background:#666;"></div></div>
+      <div class="bar-count">${otherCount}</div>
+    `;
+    barsContainer.appendChild(row);
   }
 
+  // entropy 計算只用固定12組(不含「其他」),分母固定是 log2(12)
   const entropy = calculateShannonEntropy(counts);
-  const maxPossibleEntropy = Math.log2(fixedGenreList.length); // 固定分母!不隨個人聽的種類變動
+  const maxPossibleEntropy = Math.log2(GENRE_GROUP_ORDER.length);
   const percent = maxPossibleEntropy > 0 ? (entropy / maxPossibleEntropy) * 100 : 0;
   entropyPercents.genre = percent;
 
   document.getElementById("genre-view").style.display = "block";
   document.getElementById("genre-entropy-result").innerHTML = `
-    ${percent.toFixed(1)}%
-    <span style="color:#999; font-weight:normal; font-size:14px;">
-      (H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits，以 Deezer 官方共 ${fixedGenreList.length} 種流派為固定分母，共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""})
-    </span>
+    <div class="entropy-row">
+      ${generateCircularProgressSVG(percent, 90, 9)}
+      <div>
+        <div style="font-size:15px; color:#ccc;">流派多元度</div>
+        <span style="color:#999; font-size:13px;">
+          H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits(固定12大類)<br>
+          共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首歸類為其他` : ""}${noDataCount > 0 ? `，${noDataCount} 首查無資料` : ""}
+        </span>
+      </div>
+    </div>
   `;
   renderTasteSummary();
 }
