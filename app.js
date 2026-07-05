@@ -597,7 +597,7 @@ function renderGenreAnalysis(enrichedTracks, fixedGenreList) {
   // 只顯示有出現過的流派長條(全部畫出來太長,但 entropy 分母仍用完整清單)
   const nonZeroGenres = fixedGenreList
     .filter(g => counts[g] > 0)
-    .sort((a, b) => counts[b] - counts[a]);
+    .sort((a, b) => counts[b] - counts[a]); 
   renderBarChart("genre-bars", counts, nonZeroGenres);
 
   if (otherCount > 0) {
