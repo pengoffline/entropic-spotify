@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spotify × Last.fm 標籤文字雲</title>
+  <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.js"></script>
+  <style>
+    body {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      background: #121212;
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+    }
+    h1, h2 {
+      color: #1DB954;
+    }
+    button {
+      background: #1DB954;
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 24px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1ed760;
+    }
+    #profile-view {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    #avatar {
+      border-radius: 50%;
+    }
+    .section-box {
+      background: #1c1c1c;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    #wordcloud-canvas {
+      width: 100%;
+      height: 360px;
+      display: block;
+    }
+    .track-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 8px;
+    }
+    .track-item img {
+      border-radius: 4px;
+    }
+    .track-stats {
+      font-size: 13px;
+      color: #999;
+    }
+    .replay-badge {
+      display: inline-block;
+      background: #d51007;
+      color: #fff;
+      font-size: 12px;
+      font-weight: bold;
+      padding: 2px 10px;
+      border-radius: 10px;
+      margin-left: 6px;
+    }
+    .tag-chip {
+      display: inline-block;
+      background: #333;
+      color: #ddd;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-right: 4px;
+      margin-top: 4px;
+    }
+    .no-data-note {
+      color: #999;
+      font-size: 13px;
+      margin-top: -4px;
+      margin-bottom: 16px;
+    }
+    .quick-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .quick-stat-item {
+      background: #262626;
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+    }
+    .quick-stat-label {
+      display: block;
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 4px;
+    }
+    .quick-stat-value {
+      display: block;
+      font-size: 16px;
+      font-weight: bold;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="login-view">
+    <h1>Spotify × Last.fm 標籤文字雲</h1>
+    <p style="color:#999;">用 Spotify 登入,抓取你最近 50 首聆聽紀錄,串接 Last.fm 顯示標籤文字雲、聽眾數與重播次數。</p>
+    <button id="login-btn">用 Spotify 登入</button>
+  </div>
+
+  <div id="profile-view" style="display:none;">
+    <img id="avatar" width="80" height="80">
+    <div>
+      <h1 id="display-name-title">你好</h1>
+    </div>
+  </div>
+
+  <div id="global-loading" style="display:none; color:#999; margin:16px 0; font-size:15px;">
+    載入中,正在串接 Last.fm 資料,請稍候...
+  </div>
+
+  <div id="quick-stats-view" class="section-box" style="display:none;">
+    <h2 style="margin-top:0;">整體概況</h2>
+    <div id="quick-stats" class="quick-stats-grid"></div>
+  </div>
+
+  <div id="wordcloud-view" class="section-box" style="display:none;">
+    <h2>標籤文字雲</h2>
+    <canvas id="wordcloud-canvas" width="900" height="360"></canvas>
+  </div>
+
+  <div id="history-view" style="display:none;">
+    <h2>聆聽紀錄(最近 50 首)</h2>
+    <p class="no-data-note">listeners = Last.fm 全站聽過這首歌的人數；scrobbles = 全站總播放次數；「平均重播」= scrobbles ÷ listeners，代表平均每個聽眾重複播放了幾次。</p>
+    <div id="track-list"></div>
+  </div>
+
+  <script src="last.js"></script>
+</body>
+</html>
