@@ -161,6 +161,7 @@ async function fetchProfile(token) {
 async function fetchTopTracksAndEnrich(token, timeRange) {
   document.getElementById("global-loading").style.display = "block";
   document.getElementById("history-view").style.display = "block";
+  document.getElementById("legend-notes").style.display = "none"; // 載入中先隱藏圖例文字,等資料完成再顯示
 
   const container = document.getElementById("track-list");
   container.innerHTML = "<p style='color:#999;'>載入中,正在查詢 Spotify 最常聽曲目...</p>";
@@ -191,7 +192,7 @@ async function fetchTopTracksAndEnrich(token, timeRange) {
 
     container.innerHTML = `<p style='color:#999;'>查詢中... (${i + 1}/${tracks.length})</p>`;
 
-    const info = await fetchLastfmTrackInfo(artistName, trackName);
+    const info = await fetchLastfmTrackInfo(artistName, trackName, track.album?.name);
 
     const avgReplayPerListener =
       info.listeners && info.playcount && info.listeners > 0
@@ -228,6 +229,7 @@ async function fetchTopTracksAndEnrich(token, timeRange) {
   renderTopTagsList(tagAppearanceCount);
 
   document.getElementById("global-loading").style.display = "none";
+  document.getElementById("legend-notes").style.display = "block"; // 資料都準備好了,這時候才顯示圖例
 }
 
 // ========================================
@@ -250,10 +252,11 @@ function cleanTrackName(name) {
 // 查詢順序:
 //   1) 用 Spotify 原始曲名查 track.getInfo
 //   2) 若查無標籤,清理曲名(拿掉 feat./remaster 等後綴)後重試
-//   3) 若還是查無標籤,退回抓「歌手」的熱門標籤當備援(標記 fromFallback)
+//   3) 若還是查無標籤,退回抓「專輯」的熱門標籤(比藝人標籤更貼近這首歌的曲風)
+//   4) 專輯也查無標籤,才最後退回抓「藝人」的熱門標籤
 // 同一首歌(同歌手+同曲名)只查一次,結果共用快取
 // ========================================
-async function fetchLastfmTrackInfo(artistName, trackName) {
+async function fetchLastfmTrackInfo(artistName, trackName, albumName) {
   const cacheKey = `${artistName.toLowerCase()}|||${trackName.toLowerCase()}`;
   if (trackInfoCache[cacheKey]) {
     return trackInfoCache[cacheKey];
@@ -280,12 +283,21 @@ async function fetchLastfmTrackInfo(artistName, trackName) {
     }
   }
 
-  // 3) 還是查無標籤,退回歌手的熱門標籤當備援
+  // 3) 曲目仍查無標籤,退回「專輯」的熱門標籤(通常比藝人標籤更準確反映這首歌的曲風)
+  if (result.tags.length === 0) {
+    const albumTags = await lastfmAlbumGetTopTags(artistName, albumName);
+    if (albumTags.length > 0) {
+      result.tags = albumTags;
+      result.fromFallback = "album";
+    }
+  }
+
+  // 4) 專輯也查無標籤,最後才退回「藝人」的熱門標籤
   if (result.tags.length === 0) {
     const artistTags = await lastfmArtistGetTopTags(artistName);
     if (artistTags.length > 0) {
       result.tags = artistTags;
-      result.fromFallback = true;
+      result.fromFallback = "artist";
     }
   }
 
@@ -310,14 +322,41 @@ async function lastfmTrackGetInfo(artistName, trackName) {
     if (!data.error && data.track) {
       result.listeners = data.track.listeners ? Number(data.track.listeners) : null;
       result.playcount = data.track.playcount ? Number(data.track.playcount) : null;
+      // 注意:Last.fm 的 count 是「相對於最熱門標籤」的權重(最熱門=100),
+      // 次要標籤有時會被算成 0,但標籤本身仍然存在且有效 —— 不能用 count>0 篩掉,
+      // 否則會把真的有標籤的歌曲誤判成「無標籤」。改成把 0 當作最低權重 1 處理。
       result.tags = (data.track.toptags?.tag || [])
-        .map(t => ({ name: t.name, count: Number(t.count) || 1 }))
-        .filter(t => t.count > 0);
+        .map(t => ({ name: t.name, count: Math.max(Number(t.count) || 0, 1) }));
     }
   } catch (err) {
     console.warn(`Last.fm track.getInfo 查詢失敗: ${artistName} - ${trackName}`, err.message);
   }
   return result;
+}
+
+async function lastfmAlbumGetTopTags(artistName, albumName) {
+  if (!albumName) return [];
+  try {
+    const url = new URL(LASTFM_BASE_URL);
+    url.searchParams.set("method", "album.getTopTags");
+    url.searchParams.set("api_key", LASTFM_API_KEY);
+    url.searchParams.set("artist", artistName);
+    url.searchParams.set("album", albumName);
+    url.searchParams.set("autocorrect", "1");
+    url.searchParams.set("format", "json");
+
+    const res = await fetch(url.toString());
+    const data = await res.json();
+
+    if (!data.error && data.toptags?.tag) {
+      return data.toptags.tag
+        .map(t => ({ name: t.name, count: Math.max(Number(t.count) || 0, 1) }))
+        .slice(0, 5);
+    }
+  } catch (err) {
+    console.warn(`Last.fm album.getTopTags 查詢失敗: ${artistName} - ${albumName}`, err.message);
+  }
+  return [];
 }
 
 async function lastfmArtistGetTopTags(artistName) {
@@ -334,8 +373,7 @@ async function lastfmArtistGetTopTags(artistName) {
 
     if (!data.error && data.toptags?.tag) {
       return data.toptags.tag
-        .map(t => ({ name: t.name, count: Number(t.count) || 1 }))
-        .filter(t => t.count > 0)
+        .map(t => ({ name: t.name, count: Math.max(Number(t.count) || 0, 1) }))
         .slice(0, 5);
     }
   } catch (err) {
@@ -374,7 +412,11 @@ function renderTrackList(enrichedTracks) {
     const listenersText = listeners !== null ? `${listenersEmoji}${listeners.toLocaleString()}` : "無資料";
     const playcountText = playcount !== null ? playcount.toLocaleString() : "無資料";
     const replayText = avgReplayPerListener !== null ? `${replayEmoji}${avgReplayPerListener.toFixed(1)}` : "—";
-    const fallbackNote = tagsFromFallback ? `<span class="fallback-note">(曲目查無標籤,顯示歌手標籤)</span>` : "";
+    const fallbackNote = tagsFromFallback === "album"
+      ? `<span class="fallback-note">(曲目查無標籤,顯示專輯標籤)</span>`
+      : tagsFromFallback === "artist"
+        ? `<span class="fallback-note">(曲目/專輯皆查無標籤,顯示歌手標籤)</span>`
+        : "";
     const tagsHtml = tags.length > 0
       ? tags.slice(0, 5).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join("") + fallbackNote
       : `<span class="tag-chip">無標籤</span>`;
@@ -490,7 +532,7 @@ function renderWordCloud(tagWeights) {
     return [name, fontSize];
   });
 
-  const colors = ["#1DB954", "#d51007", "#ffffff", "#1ed760", "#ff6b5b", "#cccccc"];
+  const colors = ["#1DB954", "#2485e0", "#ffffff", "#1ed760", "#5aa9e6", "#cccccc"];
 
   WordCloud(canvas, {
     list,
