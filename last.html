@@ -48,6 +48,29 @@
       height: 420px;
       display: block;
     }
+    #top-tags-list {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .top-tag-item {
+      background: #262626;
+      border: 1px solid #1DB954;
+      border-radius: 16px;
+      padding: 6px 14px;
+      font-size: 13px;
+      color: #fff;
+    }
+    .top-tag-item .rank {
+      color: #1DB954;
+      font-weight: bold;
+      margin-right: 4px;
+    }
+    .top-tag-item .count {
+      color: #999;
+      margin-left: 4px;
+    }
     .range-btn {
       background: #333;
       color: #fff;
@@ -110,7 +133,7 @@
     }
     .quick-stats-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 12px;
       margin-bottom: 8px;
     }
@@ -153,24 +176,28 @@
     載入中,正在串接 Last.fm 資料,請稍候...
   </div>
 
+  <div id="wordcloud-view" class="section-box" style="display:none;">
+    <h2>我的音樂#tag</h2>
+    <canvas id="wordcloud-canvas" width="900" height="420"></canvas>
+    <div id="top-tags-list"></div>
+  </div>
+
   <div id="quick-stats-view" class="section-box" style="display:none;">
-    <h2 style="margin-top:0;">整體概況</h2>
+    <h2 style="margin-top:0;">歌曲概況</h2>
     <div id="quick-stats" class="quick-stats-grid"></div>
   </div>
 
-  <div id="wordcloud-view" class="section-box" style="display:none;">
-    <h2>標籤文字雲</h2>
-    <canvas id="wordcloud-canvas" width="900" height="420"></canvas>
-  </div>
-
   <div id="history-view" style="display:none;">
-    <h2>最常聽的 50 首歌</h2>
+    <h2>最常聽歌曲</h2>
     <div id="time-range-selector" style="margin-bottom:16px;">
       <button class="range-btn" data-range="short_term">這個月</button>
       <button class="range-btn" data-range="medium_term">這半年</button>
       <button class="range-btn" data-range="long_term">這一年</button>
     </div>
-    <p class="no-data-note">listeners = Last.fm 全站聽過這首歌的人數；scrobbles = 全站總播放次數；「平均重播」= scrobbles ÷ listeners，代表平均每個聽眾重複播放了幾次。</p>
+    <p class="no-data-note">播放資料根據約3000萬位Last.fm使用者的串流記錄，平均重播=播放數/聽眾數，表示其他人平均播了幾次</p>
+    <p class="no-data-note">📀聽眾>500,000 </p>
+    <p class="no-data-note">🧊聽眾<1000 </p>
+    <p class="no-data-note">🔥平均重播>10 </p>
     <div id="track-list"></div>
   </div>
 
