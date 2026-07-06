@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spotify × Last.fm 標籤文字雲</title> 
+  <title>last.spotify</title> 
   <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.js"></script>
   <style>
     body {
@@ -160,9 +160,10 @@
 <body>
 
   <div id="login-view">
-    <h1>Spotify × Last.fm 標籤文字雲</h1>
-    <p style="color:#999;">用 Spotify 登入,抓取你短/中/長期最常聽的 50 首歌,串接 Last.fm 顯示標籤文字雲、聽眾數與重播次數。</p>
+    <h1>last.spotify</h1>
+    <p style="color:#999;">擷取你最近在Spotify上最愛聽的歌曲，連接到音樂社群last.fm的資料庫，比較數千萬位網友的聆聽記錄，找出你的聽歌#tag關鍵字，以及你歌單中的最夯歌曲與冷門寶藏。</p>
     <button id="login-btn">用 Spotify 登入</button>
+    <p style="color:#999;">此網頁不會儲存你的資料，也不會將你的資料讓與其他網站</p>
   </div>
 
   <div id="profile-view" style="display:none;">
@@ -177,7 +178,7 @@
   </div>
 
   <div id="wordcloud-view" class="section-box" style="display:none;">
-    <h2>我的音樂#tag</h2>
+    <h2>我的關鍵字 #tag</h2>
     <canvas id="wordcloud-canvas" width="900" height="420"></canvas>
     <div id="top-tags-list"></div>
   </div>
@@ -202,6 +203,6 @@
     </div>
     <div id="track-list"></div>
   </div>
-
+   
   <script src="last.js"></script></body>
 </html>
