@@ -45,8 +45,27 @@
     }
     #wordcloud-canvas {
       width: 100%;
-      height: 360px;
+      height: 420px;
       display: block;
+    }
+    .range-btn {
+      background: #333;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 16px;
+      font-size: 14px;
+      margin-right: 8px;
+      cursor: pointer;
+    }
+    .range-btn.active {
+      background: #1DB954;
+      font-weight: bold;
+    }
+    .fallback-note {
+      color: #888;
+      font-size: 11px;
+      margin-left: 4px;
     }
     .track-item {
       display: flex;
@@ -119,7 +138,7 @@
 
   <div id="login-view">
     <h1>Spotify × Last.fm 標籤文字雲</h1>
-    <p style="color:#999;">用 Spotify 登入,抓取你最近 50 首聆聽紀錄,串接 Last.fm 顯示標籤文字雲、聽眾數與重播次數。</p>
+    <p style="color:#999;">用 Spotify 登入,抓取你短/中/長期最常聽的 50 首歌,串接 Last.fm 顯示標籤文字雲、聽眾數與重播次數。</p>
     <button id="login-btn">用 Spotify 登入</button>
   </div>
 
@@ -141,15 +160,20 @@
 
   <div id="wordcloud-view" class="section-box" style="display:none;">
     <h2>標籤文字雲</h2>
-    <canvas id="wordcloud-canvas" width="900" height="360"></canvas>
+    <canvas id="wordcloud-canvas" width="900" height="420"></canvas>
   </div>
 
   <div id="history-view" style="display:none;">
-    <h2>聆聽紀錄(最近 50 首)</h2>
+    <h2>最常聽的 50 首歌</h2>
+    <div id="time-range-selector" style="margin-bottom:16px;">
+      <button class="range-btn" data-range="short_term">這個月</button>
+      <button class="range-btn" data-range="medium_term">這半年</button>
+      <button class="range-btn" data-range="long_term">這一年</button>
+    </div>
     <p class="no-data-note">listeners = Last.fm 全站聽過這首歌的人數；scrobbles = 全站總播放次數；「平均重播」= scrobbles ÷ listeners，代表平均每個聽眾重複播放了幾次。</p>
     <div id="track-list"></div>
   </div>
 
-  <script src="last.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
