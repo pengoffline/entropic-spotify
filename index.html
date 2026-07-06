@@ -170,6 +170,16 @@
     </div>
   </div>
 
+  <div id="time-range-selector" style="display:none; margin-bottom:24px;">
+    <button class="range-btn" data-range="short_term">這個月</button>
+    <button class="range-btn" data-range="medium_term">這半年</button>
+    <button class="range-btn" data-range="long_term">這一年</button>
+  </div>
+
+  <div id="global-loading" style="display:none; color:#999; margin:16px 0; font-size:15px;">
+    載入中,正在分析你的音樂資料,請稍候...
+  </div>
+
   <div id="taste-summary" class="summary-box" style="display:none;">
     <h2 style="margin-top:0;">我的音樂熵值🔥</h2>
     <div id="taste-summary-value" style="display:flex; justify-content:center; margin:12px 0;"></div>
@@ -178,20 +188,6 @@
       品味多元/混亂程度
     </p>
     <div id="taste-summary-breakdown" style="margin-top:10px; font-size:14px; color:#ccc;"></div>
-  </div>
-
-  <div id="global-loading" style="display:none; color:#999; margin:16px 0; font-size:15px;">
-    載入中,正在分析你的音樂資料,請稍候...
-  </div>
-
-  <div id="history-view" style="display:none;">
-    <h2>聆聽紀錄</h2>
-    <div id="time-range-selector" style="margin-bottom:16px;">
-      <button class="range-btn" data-range="short_term">這個月</button>
-      <button class="range-btn" data-range="medium_term">這半年</button>
-      <button class="range-btn" data-range="long_term">這一年</button>
-    </div>
-    <div id="track-list"></div>
   </div>
 
   <div id="decade-view" style="display:none;">
@@ -211,6 +207,12 @@
     <div class="entropy-result" id="genre-entropy-result"></div>
     <div class="genre-block" id="genre-bars"></div>
   </div>
+
+  <div id="history-view" style="display:none;">
+    <h2>聆聽紀錄</h2>
+    <div id="track-list"></div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
