@@ -3,7 +3,7 @@
 <head> 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spotify 聆聽分析</title>
+  <title>Entropic Spotify</title> <!-- 這行是新的！！！ -->
   <style>
     body {
       font-family: "Helvetica Neue", Arial, sans-serif;
@@ -159,8 +159,10 @@
 <body>
 
   <div id="login-view">
-    <h1>歡迎使用 Spotify 聆聽分析</h1>
-    <button id="login-btn">用 Spotify 登入</button>
+    <h1>Entropic Spotify</h1>
+    <p style="color:#999;">擷取你最近在Spotify上最愛聽的歌曲，從時代、人氣、曲風分析，用熵值（Entropy）計算出你的歌單有多混亂、音樂品味有多多元</p> <!-- 這行是新的！！！ -->
+   <button id="login-btn">用 Spotify 登入</button>
+    <p style="color:#999;">此網頁不會儲存你的資料，也不會將你的資料讓與其他網站</p> <!-- 這行是新的！！！ -->
   </div>
 
   <div id="profile-view" style="display:none;">
@@ -170,24 +172,28 @@
     </div>
   </div>
 
-  <div id="time-range-selector" style="display:none; margin-bottom:24px;">
-    <button class="range-btn" data-range="short_term">這個月</button>
-    <button class="range-btn" data-range="medium_term">這半年</button>
-    <button class="range-btn" data-range="long_term">這一年</button>
+  <div id="taste-summary" class="summary-box" style="display:none;">
+    <h2 style="margin-top:0;">🔥我的音樂熵值 Spotify Entropy</h2> <!-- 這行是新的！！！ -->
+    <div id="taste-summary-value" style="display:flex; justify-content:center; margin:12px 0;"></div>
+    <div id="quick-stats" class="quick-stats-grid"></div>
+    <p style="color:#999; font-size:13px; margin-bottom:0;">
+      品味混亂程度
+    </p>
+    <div id="taste-summary-breakdown" style="margin-top:10px; font-size:14px; color:#ccc;"></div>
   </div>
 
   <div id="global-loading" style="display:none; color:#999; margin:16px 0; font-size:15px;">
     載入中,正在分析你的音樂資料,請稍候...
   </div>
 
-  <div id="taste-summary" class="summary-box" style="display:none;">
-    <h2 style="margin-top:0;">我的音樂熵值🔥</h2>
-    <div id="taste-summary-value" style="display:flex; justify-content:center; margin:12px 0;"></div>
-    <div id="quick-stats" class="quick-stats-grid"></div>
-    <p style="color:#999; font-size:13px; margin-bottom:0;">
-      品味多元/混亂程度
-    </p>
-    <div id="taste-summary-breakdown" style="margin-top:10px; font-size:14px; color:#ccc;"></div>
+  <div id="history-view" style="display:none;">
+    <h2>聆聽紀錄</h2>
+    <div id="time-range-selector" style="margin-bottom:16px;">
+      <button class="range-btn" data-range="short_term">這個月</button>
+      <button class="range-btn" data-range="medium_term">這半年</button>
+      <button class="range-btn" data-range="long_term">這一年</button>
+    </div>
+    <div id="track-list"></div>
   </div>
 
   <div id="decade-view" style="display:none;">
@@ -207,12 +213,6 @@
     <div class="entropy-result" id="genre-entropy-result"></div>
     <div class="genre-block" id="genre-bars"></div>
   </div>
-
-  <div id="history-view" style="display:none;">
-    <h2>聆聽紀錄</h2>
-    <div id="track-list"></div>
-  </div>
-
   <script src="app.js"></script>
 </body>
 </html>
