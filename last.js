@@ -6,15 +6,17 @@ const clientId = "18a7af28818a40abafa707e98e4d7a48";
 // 1. 把下面這行換成這個頁面實際發布後的 GitHub Pages 網址
 // 2. 到 Spotify Developer Dashboard 的 App 設定裡,把這個網址加進 Redirect URIs 清單
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/last.html";
-
-const scope = "user-read-private user-read-recently-played";
+// 需要讀取個人資料 + 短/中/長期最常聽曲目
+const scope = "user-read-private user-top-read";
 
 const LASTFM_API_KEY = "ae2cc018d4f250ba07c42af81da93d95";
 const LASTFM_BASE_URL = "https://ws.audioscrobbler.com/2.0/";
 
-const RECENT_TRACKS_LIMIT = 50;
+const TOP_TRACKS_LIMIT = 50;
 
-const trackInfoCache = {}; // "artist|||track" -> { listeners, playcount, tags: [{name, count}] }
+const trackInfoCache = {}; // "artist|||track" -> { listeners, playcount, tags: [{name, count}], fromFallback }
+
+let currentToken = null;
 
 // ========================================
 // PKCE 工具函式(與原本 Spotify 專案相同)
@@ -98,13 +100,32 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 async function runAll(token) {
+  currentToken = token;
   try {
     await fetchProfile(token);
-    await fetchRecentlyPlayedAndEnrich(token);
+    setupRangeButtons();
+    await fetchTopTracksAndEnrich(token, "medium_term"); // 預設顯示「這半年」
   } catch (err) {
     console.error(err);
     alert(`發生錯誤:${err.message}`);
   }
+}
+
+// ========================================
+// 時間範圍按鈕(這個月 / 這半年 / 這一年)
+// ========================================
+function setupRangeButtons() {
+  const buttons = document.querySelectorAll(".range-btn");
+  buttons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      buttons.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      fetchTopTracksAndEnrich(currentToken, btn.dataset.range);
+    });
+    if (btn.dataset.range === "medium_term") {
+      btn.classList.add("active");
+    }
+  });
 }
 
 // ========================================
@@ -132,39 +153,39 @@ async function fetchProfile(token) {
 }
 
 // ========================================
-// 抓取最近 50 首播放紀錄,逐首串接 Last.fm 補上 listeners / scrobbles / 標籤
+// 抓取「最常聽」50 首曲目(依時間範圍),逐首串接 Last.fm 補上 listeners / scrobbles / 標籤
 // ========================================
-async function fetchRecentlyPlayedAndEnrich(token) {
+async function fetchTopTracksAndEnrich(token, timeRange) {
   document.getElementById("global-loading").style.display = "block";
   document.getElementById("history-view").style.display = "block";
 
   const container = document.getElementById("track-list");
-  container.innerHTML = "<p style='color:#999;'>載入中,正在查詢 Spotify 聆聽紀錄...</p>";
+  container.innerHTML = "<p style='color:#999;'>載入中,正在查詢 Spotify 最常聽曲目...</p>";
 
   const res = await fetch(
-    `https://api.spotify.com/v1/me/player/recently-played?limit=${RECENT_TRACKS_LIMIT}`,
+    `https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=${TOP_TRACKS_LIMIT}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
   if (!res.ok) {
-    console.error("抓取聆聽紀錄失敗", res.status);
-    container.innerHTML = "<p style='color:#f66;'>抓取聆聽紀錄失敗,請稍後再試。</p>";
+    console.error("抓取最常聽曲目失敗", res.status);
+    container.innerHTML = "<p style='color:#f66;'>抓取資料失敗,請稍後再試。</p>";
     document.getElementById("global-loading").style.display = "none";
     return;
   }
 
   const data = await res.json();
-  const items = data.items || [];
+  const tracks = data.items || [];
 
   const enrichedTracks = [];
   const tagWeights = {}; // 標籤名稱 -> 累積權重(用於文字雲)
 
-  for (let i = 0; i < items.length; i++) {
-    const { track, played_at } = items[i];
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i];
     const artistName = track.artists[0].name;
     const trackName = track.name;
 
-    container.innerHTML = `<p style='color:#999;'>查詢中... (${i + 1}/${items.length})</p>`;
+    container.innerHTML = `<p style='color:#999;'>查詢中... (${i + 1}/${tracks.length})</p>`;
 
     const info = await fetchLastfmTrackInfo(artistName, trackName);
 
@@ -179,16 +200,15 @@ async function fetchRecentlyPlayedAndEnrich(token) {
     });
 
     enrichedTracks.push({
+      rank: i + 1,
       artist: artistName,
       name: trackName,
       image: track.album.images?.[2]?.url || track.album.images?.[0]?.url,
-      playedAt: new Date(played_at).toLocaleString("zh-TW", {
-        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-      }),
       listeners: info.listeners,
       playcount: info.playcount,
       avgReplayPerListener,
       tags: info.tags.map(t => t.name),
+      tagsFromFallback: info.fromFallback,
     });
   }
 
@@ -200,9 +220,27 @@ async function fetchRecentlyPlayedAndEnrich(token) {
 }
 
 // ========================================
+// 清理 Spotify 曲名裡常見、會讓 Last.fm 比對失敗的後綴
+// 例如:"Song (feat. Someone)"、"Song - 2011 Remaster"、"Song (Live)" 等
+// 只在第一次查詢查無標籤時才會用清理過的名稱重試,不影響原本的曲名顯示
+// ========================================
+function cleanTrackName(name) {
+  return name
+    .replace(/\s*\(feat\.?[^)]*\)/i, "")
+    .replace(/\s*\[feat\.?[^\]]*\]/i, "")
+    .replace(/\s*\(with\s+[^)]*\)/i, "")
+    .replace(/\s*-\s*(remaster(ed)?(\s*\d{4})?|live.*|radio edit|single version|bonus track|mono version|stereo version|deluxe.*|explicit|clean|\d{4}\s*mix)\s*$/i, "")
+    .replace(/\s*\((remaster(ed)?[^)]*|live[^)]*|radio edit|single version|bonus track|mono[^)]*|stereo[^)]*|deluxe[^)]*|explicit|clean)\)\s*$/i, "")
+    .trim();
+}
+
+// ========================================
 // 查詢單一曲目在 Last.fm 的資訊:listeners / scrobbles(playcount) / 標籤
+// 查詢順序:
+//   1) 用 Spotify 原始曲名查 track.getInfo
+//   2) 若查無標籤,清理曲名(拿掉 feat./remaster 等後綴)後重試
+//   3) 若還是查無標籤,退回抓「歌手」的熱門標籤當備援(標記 fromFallback)
 // 同一首歌(同歌手+同曲名)只查一次,結果共用快取
-// Last.fm 對 JSON 回應開放 CORS,可直接 fetch
 // ========================================
 async function fetchLastfmTrackInfo(artistName, trackName) {
   const cacheKey = `${artistName.toLowerCase()}|||${trackName.toLowerCase()}`;
@@ -210,6 +248,42 @@ async function fetchLastfmTrackInfo(artistName, trackName) {
     return trackInfoCache[cacheKey];
   }
 
+  let result = { listeners: null, playcount: null, tags: [], fromFallback: false };
+
+  // 1) 原始曲名
+  const first = await lastfmTrackGetInfo(artistName, trackName);
+  result.listeners = first.listeners;
+  result.playcount = first.playcount;
+  result.tags = first.tags;
+
+  // 2) 若查無標籤,試試清理過的曲名
+  if (result.tags.length === 0) {
+    const cleanedName = cleanTrackName(trackName);
+    if (cleanedName && cleanedName.toLowerCase() !== trackName.toLowerCase()) {
+      const second = await lastfmTrackGetInfo(artistName, cleanedName);
+      if (second.tags.length > 0) {
+        result.tags = second.tags;
+      }
+      // listeners/playcount 也一併補上(如果第一次查詢曲目本身就找不到)
+      if (result.listeners === null) result.listeners = second.listeners;
+      if (result.playcount === null) result.playcount = second.playcount;
+    }
+  }
+
+  // 3) 還是查無標籤,退回歌手的熱門標籤當備援
+  if (result.tags.length === 0) {
+    const artistTags = await lastfmArtistGetTopTags(artistName);
+    if (artistTags.length > 0) {
+      result.tags = artistTags;
+      result.fromFallback = true;
+    }
+  }
+
+  trackInfoCache[cacheKey] = result;
+  return result;
+}
+
+async function lastfmTrackGetInfo(artistName, trackName) {
   let result = { listeners: null, playcount: null, tags: [] };
   try {
     const url = new URL(LASTFM_BASE_URL);
@@ -226,17 +300,38 @@ async function fetchLastfmTrackInfo(artistName, trackName) {
     if (!data.error && data.track) {
       result.listeners = data.track.listeners ? Number(data.track.listeners) : null;
       result.playcount = data.track.playcount ? Number(data.track.playcount) : null;
-      result.tags = (data.track.toptags?.tag || []).map(t => ({
-        name: t.name,
-        count: Number(t.count) || 1,
-      }));
+      result.tags = (data.track.toptags?.tag || [])
+        .map(t => ({ name: t.name, count: Number(t.count) || 1 }))
+        .filter(t => t.count > 0);
     }
   } catch (err) {
-    console.warn(`Last.fm 查詢失敗: ${artistName} - ${trackName}`, err.message);
+    console.warn(`Last.fm track.getInfo 查詢失敗: ${artistName} - ${trackName}`, err.message);
   }
-
-  trackInfoCache[cacheKey] = result;
   return result;
+}
+
+async function lastfmArtistGetTopTags(artistName) {
+  try {
+    const url = new URL(LASTFM_BASE_URL);
+    url.searchParams.set("method", "artist.getTopTags");
+    url.searchParams.set("api_key", LASTFM_API_KEY);
+    url.searchParams.set("artist", artistName);
+    url.searchParams.set("autocorrect", "1");
+    url.searchParams.set("format", "json");
+
+    const res = await fetch(url.toString());
+    const data = await res.json();
+
+    if (!data.error && data.toptags?.tag) {
+      return data.toptags.tag
+        .map(t => ({ name: t.name, count: Number(t.count) || 1 }))
+        .filter(t => t.count > 0)
+        .slice(0, 5);
+    }
+  } catch (err) {
+    console.warn(`Last.fm artist.getTopTags 查詢失敗: ${artistName}`, err.message);
+  }
+  return [];
 }
 
 // ========================================
@@ -246,12 +341,13 @@ function renderTrackList(enrichedTracks) {
   const container = document.getElementById("track-list");
   container.innerHTML = "";
 
-  enrichedTracks.forEach(({ artist, name, image, playedAt, listeners, playcount, avgReplayPerListener, tags }) => {
+  enrichedTracks.forEach(({ rank, artist, name, image, listeners, playcount, avgReplayPerListener, tags, tagsFromFallback }) => {
     const listenersText = listeners !== null ? listeners.toLocaleString() : "無資料";
     const playcountText = playcount !== null ? playcount.toLocaleString() : "無資料";
     const replayText = avgReplayPerListener !== null ? avgReplayPerListener.toFixed(1) : "—";
+    const fallbackNote = tagsFromFallback ? `<span class="fallback-note">(曲目查無標籤,顯示歌手標籤)</span>` : "";
     const tagsHtml = tags.length > 0
-      ? tags.slice(0, 5).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join("")
+      ? tags.slice(0, 5).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join("") + fallbackNote
       : `<span class="tag-chip">無標籤</span>`;
 
     const item = document.createElement("div");
@@ -259,9 +355,9 @@ function renderTrackList(enrichedTracks) {
     item.innerHTML = `
       <img src="${image || ''}" width="60" height="60" onerror="this.style.visibility='hidden'">
       <div>
-        <strong>${escapeHtml(name)}</strong> - ${escapeHtml(artist)}<br>
+        <strong>#${rank} ${escapeHtml(name)}</strong> - ${escapeHtml(artist)}<br>
         <span class="track-stats">
-          ${playedAt} ｜ 聽眾 ${listenersText} ｜ 播放 ${playcountText}
+          聽眾 ${listenersText} ｜ 播放 ${playcountText}
           <span class="replay-badge">平均重播 ${replayText} 次</span>
         </span><br>
         ${tagsHtml}
@@ -289,11 +385,9 @@ function renderQuickStats(enrichedTracks) {
     ? (withData.reduce((sum, t) => sum + t.avgReplayPerListener, 0) / withData.length).toFixed(1)
     : null;
 
-  // 「最忠實粉絲」歌曲:scrobbles/listeners 比例最高的一首(代表這首歌的聽眾特別愛重播)
   const mostReplayed = withData.reduce((max, t) =>
     (!max || t.avgReplayPerListener > max.avgReplayPerListener) ? t : max, null);
 
-  // 最冷門(listeners 最少)的一首
   const mostRare = withData.reduce((min, t) =>
     (!min || t.listeners < min.listeners) ? t : min, null);
 
@@ -308,7 +402,9 @@ function renderQuickStats(enrichedTracks) {
 
 // ========================================
 // 標籤文字雲(用 wordcloud2.js 畫在 canvas 上)
-// 字越大代表這個標籤在你的 50 首歌裡權重越高
+// 修正重點:
+//   1) 依裝置畫素密度(devicePixelRatio)設定 canvas 實際解析度,避免模糊
+//   2) 用 min-max 正規化把權重映射到明確的字級範圍(14px ~ 90px),讓大小差異更明顯
 // ========================================
 function renderWordCloud(tagWeights) {
   const entries = Object.entries(tagWeights);
@@ -317,25 +413,43 @@ function renderWordCloud(tagWeights) {
   document.getElementById("wordcloud-view").style.display = "block";
 
   const canvas = document.getElementById("wordcloud-canvas");
-  // 依容器實際寬度設定 canvas 解析度,避免模糊
-  canvas.width = canvas.clientWidth;
-  canvas.height = 360;
+  const dpr = window.devicePixelRatio || 1;
+  const displayWidth = canvas.clientWidth || 900;
+  const displayHeight = 420;
 
-  const colors = ["#1DB954", "#d51007", "#ffffff", "#1ed760", "#ff6b5b", "#9b9b9b"];
+  // 實際像素解析度依 dpr 放大,CSS 顯示尺寸維持不變 -> 畫面更銳利
+  canvas.width = displayWidth * dpr;
+  canvas.height = displayHeight * dpr;
+  canvas.style.width = displayWidth + "px";
+  canvas.style.height = displayHeight + "px";
 
-  const list = entries
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 60) // 最多顯示60個標籤,避免過度擁擠
-    .map(([name, weight]) => [name, weight]);
+  const sortedEntries = entries.sort((a, b) => b[1] - a[1]).slice(0, 50); // 最多顯示50個標籤
+  const weights = sortedEntries.map(([, w]) => w);
+  const maxW = Math.max(...weights);
+  const minW = Math.min(...weights);
+
+  const MIN_FONT = 16 * dpr;
+  const MAX_FONT = 100 * dpr;
+
+  const list = sortedEntries.map(([name, w]) => {
+    const norm = maxW === minW ? 1 : (w - minW) / (maxW - minW);
+    const fontSize = MIN_FONT + norm * (MAX_FONT - MIN_FONT);
+    return [name, fontSize];
+  });
+
+  const colors = ["#1DB954", "#d51007", "#ffffff", "#1ed760", "#ff6b5b", "#cccccc"];
 
   WordCloud(canvas, {
     list,
-    gridSize: 8,
-    weightFactor: (size) => Math.pow(size, 0.6) * 2.2,
+    weightFactor: (size) => size, // list 裡的數值就是最終字級(px),不再另外縮放
     fontFamily: "Helvetica Neue, Arial, sans-serif",
+    fontWeight: "bold",
     color: () => colors[Math.floor(Math.random() * colors.length)],
     backgroundColor: "transparent",
-    rotateRatio: 0.3,
+    gridSize: Math.round(6 * dpr),
+    rotateRatio: 0.25,
     rotationSteps: 2,
+    shrinkToFit: true,
+    drawOutOfBound: false,
   });
 }
