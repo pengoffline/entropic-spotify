@@ -1,6 +1,6 @@
 // ========================================
 // 基本設定
-// ========================================
+// ======================================== 
 const clientId = "18a7af28818a40abafa707e98e4d7a48";
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
 
@@ -126,7 +126,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
 let currentToken = null; // 存起來讓時間範圍按鈕可以重複呼叫 API
 
-// 三個維度正規化後的 entropy 百分比(0~100),算完幾何平均要用
 const entropyPercents = { decade: null, fame: null, genre: null };
 
 // 頂部總覽的四個補充統計欄位
@@ -135,7 +134,6 @@ const quickStats = { avgYear: null, avgFameLabel: null, favoriteDecade: null, fa
 async function runAll(token) {
   currentToken = token;
   await fetchProfile(token);
-  document.getElementById("time-range-selector").style.display = "block";
   setupRangeButtons();
   await fetchTopTracks(token, "medium_term"); // 預設顯示「最近6個月」
 }
@@ -186,7 +184,7 @@ async function fetchProfile(token) {
 // time_range: short_term(約4週) / medium_term(約6個月) / long_term(約數年)
 // ========================================
 async function fetchTopTracks(token, timeRange) {
-  // 重置三個維度的暫存值,避免切換時間範圍時新舊資料混在一起算幾何平均
+  // 重置三個維度的暫存值,避免切換時間範圍時新舊資料混在一起算平均
   entropyPercents.decade = null;
   entropyPercents.fame = null;
   entropyPercents.genre = null;
@@ -346,7 +344,7 @@ function renderTracks(enrichedTracks) {
 
   const note = document.createElement("p");
   note.className = "no-data-note";
-  note.textContent = "註:知名度與流派皆來自 Deezer(同專輯的歌曲共用查詢結果以加速);查無資料時退回 Spotify 分類(Spotify 原生流行度欄位已被官方停止提供)。";
+  //note.textContent = "註:知名度與流派皆來自 Deezer(同專輯的歌曲共用查詢結果以加速);查無資料時退回 Spotify 分類(Spotify 原生流行度欄位已被官方停止提供)。";
   container.appendChild(note);
 
   enrichedTracks.forEach(({ track, fameRank, genre }) => {
@@ -368,7 +366,7 @@ function renderTracks(enrichedTracks) {
       <img src="${track.album.images[2]?.url || track.album.images[0]?.url}" width="60" height="60">
       <div>
         <strong>${track.name}</strong> - ${track.artists.map(a => a.name).join(", ")}<br>
-        <small>發行年份: ${releaseYear} ｜ 知名度: ${fameText} ｜ 流派: ${genreText}</small>
+        <small>${releaseYear} ｜ ${fameText} ｜ ${genreText}</small>
       </div>
     `;
     container.appendChild(item);
@@ -447,8 +445,8 @@ function renderQuickStats() {
 
   el.innerHTML = `
     <div class="quick-stat-item"><span class="quick-stat-label">平均年份</span><span class="quick-stat-value">${quickStats.avgYear ?? "—"}</span></div>
-    <div class="quick-stat-item"><span class="quick-stat-label">流行程度</span><span class="quick-stat-value">${quickStats.avgFameLabel ?? "—"}</span></div>
     <div class="quick-stat-item"><span class="quick-stat-label">最愛年代</span><span class="quick-stat-value">${quickStats.favoriteDecade ?? "—"}</span></div>
+    <div class="quick-stat-item"><span class="quick-stat-label">流行程度</span><span class="quick-stat-value">${quickStats.avgFameLabel ?? "—"}</span></div>
     <div class="quick-stat-item"><span class="quick-stat-label">最愛類型</span><span class="quick-stat-value">${quickStats.favoriteGenre ?? "—"}</span></div>
   `;
 }
@@ -472,13 +470,13 @@ function renderTasteSummary() {
   document.getElementById("taste-summary").style.display = "block";
   document.getElementById("taste-summary-value").innerHTML = generateCircularProgressSVG(weightedScore, 140, 14, "#1DB954");
   document.getElementById("taste-summary-breakdown").innerHTML = `
-    年代多元度: ${decade.toFixed(1)}%(權重7) ｜ 知名度多元度: ${fame.toFixed(1)}%(權重5) ｜ 流派多元度: ${genre.toFixed(1)}%(權重12)
+    年代多元度 ${decade.toFixed(1)}% ｜ 人氣多元度 ${fame.toFixed(1)}% ｜ 類型多元度 ${genre.toFixed(1)}%
   `;
   document.getElementById("global-loading").style.display = "none";
 }
 
 // ========================================
-// 【維度一】依年代分組 (1960s ~ 2020s) + Shannon Entropy
+// 依年代分組 (1960s ~ 2020s) + Shannon Entropy
 // ========================================
 function getDecadeLabel(releaseDate) {
   if (!releaseDate) return "其他";
@@ -510,7 +508,7 @@ function renderDecadeAnalysis(tracks) {
 
   // 平均年份(全部曲目,不限1960-2020區間)
   if (yearCount > 0) {
-    quickStats.avgYear = Math.round(yearSum / yearCount);
+    quickStats.avgYear = (yearSum / yearCount).toFixed(1);
   }
 
   // 最愛年代:眾數(只在固定7個年代裡取,不含「其他」)
@@ -547,7 +545,7 @@ function renderDecadeAnalysis(tracks) {
       <div>
         <div style="font-size:15px; color:#ccc;">年代多元度</div>
         <span style="color:#999; font-size:13px;">
-          H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits<br>
+          = Entropy ${entropy.toFixed(4)} / Max ${maxPossibleEntropy.toFixed(4)}<br>
           共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""}
         </span>
       </div>
@@ -558,19 +556,19 @@ function renderDecadeAnalysis(tracks) {
 }
 
 // ========================================
-// 【維度二】依知名度分組(Deezer rank) + Shannon Entropy
+// 依知名度分組(Deezer rank) + Shannon Entropy
 // 分級門檻是依 Deezer rank 概略估計,非官方公告的絕對標準
 // ========================================
 function getFameLabel(rank) {
   if (typeof rank !== "number") return "無資料";
   if (rank >= 750000) return "超夯";
   if (rank >= 250000) return "主流";
-  if (rank >= 75000) return "普通";
+  if (rank >= 75000) return "中等";
   if (rank >= 25000) return "小眾";
   return "稀有";
 }
 
-const FAME_ORDER = ["稀有", "小眾", "普通", "主流", "超夯"];
+const FAME_ORDER = ["稀有", "小眾", "中等", "主流", "超夯"];
 
 function renderFameAnalysis(enrichedTracks) {
   const fameOrder = FAME_ORDER;
@@ -611,9 +609,9 @@ function renderFameAnalysis(enrichedTracks) {
     <div class="entropy-row">
       ${generateCircularProgressSVG(percent, 90, 9)}
       <div>
-        <div style="font-size:15px; color:#ccc;">知名度多元度</div>
+        <div style="font-size:15px; color:#ccc;">人氣多元度</div>
         <span style="color:#999; font-size:13px;">
-          H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits<br>
+          = Entropy ${entropy.toFixed(4)} / Max ${maxPossibleEntropy.toFixed(4)}<br>
           共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""}
         </span>
       </div>
@@ -647,10 +645,10 @@ const GENRE_GROUP_MAP = {
   "Latin Music": "世界",
   "Brazilian Music": "世界",
   "African Music": "世界",
-  "Films/Games": "配樂",
+  "Films/Games": "原聲帶",
 };
 
-const GENRE_GROUP_ORDER = ["流行", "嘻哈", "搖滾", "R&B", "另類", "電子", "民謠", "爵士", "古典", "亞洲", "世界", "配樂"];
+const GENRE_GROUP_ORDER = ["流行", "嘻哈", "搖滾", "R&B", "另類", "電子", "民謠", "爵士", "古典", "亞洲", "世界", "原聲帶"];
 
 // ========================================
 // 【維度三】依流派分組(固定12組) + Shannon Entropy
@@ -711,9 +709,9 @@ function renderGenreAnalysis(enrichedTracks) {
     <div class="entropy-row">
       ${generateCircularProgressSVG(percent, 90, 9)}
       <div>
-        <div style="font-size:15px; color:#ccc;">流派多元度</div>
+        <div style="font-size:15px; color:#ccc;">類型多元度</div>
         <span style="color:#999; font-size:13px;">
-          H = ${entropy.toFixed(4)} / 最大值 ${maxPossibleEntropy.toFixed(4)} bits(固定12大類)<br>
+          = Entrpy ${entropy.toFixed(4)} / Max ${maxPossibleEntropy.toFixed(4)}<br>
           共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首歸類為其他` : ""}${noDataCount > 0 ? `，${noDataCount} 首查無資料` : ""}
         </span>
       </div>
