@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Spotify × Last.fm 標籤文字雲</title>
   <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.js"></script>
   <style>
@@ -107,7 +107,7 @@
     }
     .replay-badge {
       display: inline-block;
-      background: #d51007;
+      background: #2485e0;
       color: #fff;
       font-size: 12px;
       font-weight: bold;
@@ -194,10 +194,12 @@
       <button class="range-btn" data-range="medium_term">這半年</button>
       <button class="range-btn" data-range="long_term">這一年</button>
     </div>
-    <p class="no-data-note">播放資料根據約3000萬位Last.fm使用者的串流記錄，平均重播=播放數/聽眾數，表示其他人平均播了幾次</p>
-    <p class="no-data-note">📀聽眾>500,000 </p>
-    <p class="no-data-note">🧊聽眾<1000 </p>
-    <p class="no-data-note">🔥平均重播>10 </p>
+    <div id="legend-notes" style="display:none;">
+      <p class="no-data-note">播放資料根據約3000萬位Last.fm使用者的串流記錄，平均重播=播放數/聽眾數，表示其他人平均播了幾次</p>
+      <p class="no-data-note">📀聽眾>500,000<br>
+      🧊聽眾<1000<br>
+      🔥平均重播>10</p>
+    </div>
     <div id="track-list"></div>
   </div>
 
