@@ -161,6 +161,7 @@
   <div id="login-view">
     <h1>Entropic Spotify</h1>
     <p style="color:#999;">擷取你最近在Spotify上最愛聽的歌曲，從時代、人氣、曲風分析，用熵值（Entropy）計算出你的歌單有多混亂、音樂品味有多多元</p> <!-- 這行是新的！！！ -->
+    <p style="color:#999;">clayhsu.123</p> <!-- 這行是新的！！！ -->
    <button id="login-btn">用 Spotify 登入</button>
     <p style="color:#999;">此網頁不會儲存你的資料，也不會將你的資料讓與其他網站</p> <!-- 這行是新的！！！ -->
   </div>
@@ -186,16 +187,6 @@
     載入中,正在分析你的音樂資料,請稍候...
   </div>
 
-  <div id="history-view" style="display:none;">
-    <h2>聆聽紀錄</h2>
-    <div id="time-range-selector" style="margin-bottom:16px;">
-      <button class="range-btn" data-range="short_term">這個月</button>
-      <button class="range-btn" data-range="medium_term">這半年</button>
-      <button class="range-btn" data-range="long_term">這一年</button>
-    </div>
-    <div id="track-list"></div>
-  </div>
-
   <div id="decade-view" style="display:none;">
     <h2>年代</h2>
     <div class="entropy-result" id="decade-entropy-result"></div>
@@ -213,6 +204,21 @@
     <div class="entropy-result" id="genre-entropy-result"></div>
     <div class="genre-block" id="genre-bars"></div>
   </div>
+
+  <div id="taste-summary" class="summary-box" style="display:none;">
+     <span style="font-weight: bold; font-size:24px"><a href="last.html">>>>>:D請點這裡前往下一頁分析你的聽歌關鍵字>>>></a><span>
+  </div>
+    
+  <div id="history-view" style="display:none;">
+    <h2>聆聽紀錄</h2>
+    <div id="time-range-selector" style="margin-bottom:16px;">
+      <button class="range-btn" data-range="short_term">這個月</button>
+      <button class="range-btn" data-range="medium_term">這半年</button>
+      <button class="range-btn" data-range="long_term">這一年</button>
+    </div>
+    <div id="track-list"></div>
+  </div>
+  
   <script src="app.js"></script>
 </body>
 </html>
