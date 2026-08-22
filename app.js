@@ -1,722 +1,534 @@
-// ========================================
-// 基本設定
-// ======================================== 
-const clientId = "18a7af28818a40abafa707e98e4d7a48";
-const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
+import { PARTIES, COUNTRIES, QUESTIONS, computeScores, COUNTRY_NAME_ZH, findNearestParty, economicLabel, politicalSystemLabel, democracyLabel, individualLabel, getTierLabel, ECONOMIC_EXPLANATIONS, DEMOCRACY_EXPLANATIONS, INDIVIDUAL_EXPLANATIONS, SOCIAL_EXPLANATION_FIXED } from "./data.js";
 
-// 需要的權限:個人資料 + 使用者最常聽曲目
-const scope = "user-read-private user-read-recently-played user-top-read";
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ========================================
-// PKCE 工具函式
-// ========================================
-function generateRandomString(length) {
-  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < length; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
+// ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
+let currentIndex = 0;
+const answers = {};
+let scores = null;
+let historyResults = []; // fetched from supabase
+// 每張圖各自獨立控制三個圖層開關:政黨(party)、國家(country)、所有填答者(all)
+let chartMode = {
+  eqli: { party: true, country: false, all: false },
+  indem: { party: true, country: false, all: false },
+};
+
+// ---------------------------------------------------------------
+// Screens
+// ---------------------------------------------------------------
+const screens = {
+  intro: document.getElementById("screen-intro"),
+  quiz: document.getElementById("screen-quiz"),
+  result: document.getElementById("screen-result"),
+};
+function showScreen(name) {
+  for (const key in screens) screens[key].classList.toggle("hidden", key !== name);
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-async function generateCodeChallenge(codeVerifier) {
-  const data = new TextEncoder().encode(codeVerifier);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-// ========================================
-// JSONP 工具函式(讓純前端網站也能呼叫不支援 CORS 的 API)
-// 原理:動態插入 <script> 標籤,瀏覽器對 <script src> 沒有同源限制
-// ========================================
-let jsonpCounter = 0;
-function jsonp(url, callbackParamName = "callback", timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
-    const callbackName = `jsonp_cb_${Date.now()}_${jsonpCounter++}`;
-    const script = document.createElement("script");
-
-    const cleanup = () => {
-      delete window[callbackName];
-      script.remove();
-      clearTimeout(timer);
-    };
-
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("JSONP 請求逾時"));
-    }, timeoutMs);
-
-    window[callbackName] = (data) => {
-      cleanup();
-      resolve(data);
-    };
-
-    const separator = url.includes("?") ? "&" : "?";
-    script.src = `${url}${separator}${callbackParamName}=${callbackName}`;
-    script.onerror = () => {
-      cleanup();
-      reject(new Error("JSONP 請求失敗"));
-    };
-    document.body.appendChild(script);
-  });
-}
-
-// ========================================
-// 登入按鈕:導向 Spotify 授權頁
-// ========================================
-document.getElementById("login-btn")?.addEventListener("click", async () => {
-  const codeVerifier = generateRandomString(64);
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-  localStorage.setItem("code_verifier", codeVerifier);
-
-  const authUrl = new URL("https://accounts.spotify.com/authorize");
-  const params = {
-    response_type: "code",
-    client_id: clientId,
-    scope,
-    code_challenge_method: "S256",
-    code_challenge: codeChallenge,
-    redirect_uri: redirectUri,
-  };
-  authUrl.search = new URLSearchParams(params).toString();
-  window.location.href = authUrl.toString();
+document.getElementById("start-btn").addEventListener("click", () => {
+  currentIndex = 0;
+  showScreen("quiz");
+  renderQuestion();
 });
 
-// ========================================
-// 頁面載入時:處理授權回跳 或 已登入狀態
-// ========================================
-window.addEventListener("DOMContentLoaded", async () => {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
-
-  if (code) {
-    const codeVerifier = localStorage.getItem("code_verifier");
-
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-      client_id: clientId,
-      code_verifier: codeVerifier,
-    });
-
-    const response = await fetch("https://accounts.spotify.com/api/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-
-    const data = await response.json();
-
-    if (data.access_token) {
-      localStorage.setItem("access_token", data.access_token);
-      window.history.replaceState({}, document.title, redirectUri);
-      await runAll(data.access_token);
-    } else {
-      console.error("換取 token 失敗", data);
-    }
-  } else if (localStorage.getItem("access_token")) {
-    await runAll(localStorage.getItem("access_token"));
-  }
+document.getElementById("restart-btn").addEventListener("click", () => {
+  for (const k in answers) delete answers[k];
+  currentIndex = 0;
+  scores = null;
+  showScreen("intro");
 });
 
-let currentToken = null; // 存起來讓時間範圍按鈕可以重複呼叫 API
+// ---------------------------------------------------------------
+// Quiz rendering
+// ---------------------------------------------------------------
+const quizRoot = document.getElementById("quiz-root");
+const progressFill = document.getElementById("progress-fill");
+const progressLabel = document.getElementById("progress-label");
 
-const entropyPercents = { decade: null, fame: null, genre: null };
+const GROUP_STEM = {
+  1: "你比較支持以下的哪個敘述？",
+  2: "你認為以下政策或制度有多重要？",
+  3: "你有多同意以下政策或制度？",
+  4: "你認為以下敘述是完全不正當、還是總是正當的？",
+};
 
-// 頂部總覽的四個補充統計欄位
-const quickStats = { avgYear: null, avgFameLabel: null, favoriteDecade: null, favoriteGenre: null };
+function renderQuestion() {
+  const q = QUESTIONS[currentIndex];
+  progressLabel.textContent = `Q${String(currentIndex + 1).padStart(2, "0")} / ${QUESTIONS.length}`;
+  progressFill.style.width = `${(currentIndex / QUESTIONS.length) * 100}%`;
 
-async function runAll(token) {
-  currentToken = token;
-  await fetchProfile(token);
-  setupRangeButtons();
-  await fetchTopTracks(token, "medium_term"); // 預設顯示「最近6個月」
-}
+  const stem = GROUP_STEM[q.group];
+  let bodyHtml = "";
 
-// ========================================
-// 時間範圍按鈕(最近4週 / 6個月 / 所有時間)
-// ========================================
-function setupRangeButtons() {
-  const buttons = document.querySelectorAll(".range-btn");
-  buttons.forEach(btn => {
-    btn.addEventListener("click", () => {
-      buttons.forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      fetchTopTracks(currentToken, btn.dataset.range);
-    });
-    if (btn.dataset.range === "medium_term") {
-      btn.classList.add("active");
-    }
-  });
-}
-
-// ========================================
-// 抓取使用者個人資料
-// ========================================
-async function fetchProfile(token) {
-  const res = await fetch("https://api.spotify.com/v1/me", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) {
-    console.error("抓取使用者資料失敗", res.status);
-    localStorage.removeItem("access_token");
-    return;
-  }
-
-  const profile = await res.json();
-
-  document.getElementById("login-view").style.display = "none";
-  document.getElementById("profile-view").style.display = "flex";
-  document.getElementById("display-name-title").textContent = `你好, ${profile.display_name}`;
-  if (profile.images?.[0]) {
-    document.getElementById("avatar").src = profile.images[0].url;
-  }
-}
-
-// ========================================
-// 抓取「最常聽」曲目(依時間範圍)
-// time_range: short_term(約4週) / medium_term(約6個月) / long_term(約數年)
-// ========================================
-async function fetchTopTracks(token, timeRange) {
-  // 重置三個維度的暫存值,避免切換時間範圍時新舊資料混在一起算平均
-  entropyPercents.decade = null;
-  entropyPercents.fame = null;
-  entropyPercents.genre = null;
-  quickStats.avgYear = null;
-  quickStats.avgFameLabel = null;
-  quickStats.favoriteDecade = null;
-  quickStats.favoriteGenre = null;
-  renderQuickStats();
-  document.getElementById("taste-summary").style.display = "none";
-  document.getElementById("decade-view").style.display = "none";
-  document.getElementById("fame-view").style.display = "none";
-  document.getElementById("genre-view").style.display = "none";
-
-  // 立即顯示載入提示(修正原本訊息被藏在 display:none 容器裡看不到的問題)
-  document.getElementById("global-loading").style.display = "block";
-  document.getElementById("history-view").style.display = "block";
-
-  const container = document.getElementById("track-list");
-  container.innerHTML = "<p style='color:#999;'>載入中,請稍候(正在查詢 Deezer 資料庫)...</p>";
-
-  const res = await fetch(
-    `https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=50`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!res.ok) {
-    console.error("抓取最常聽曲目失敗", res.status);
-    container.innerHTML = "<p style='color:#f66;'>抓取資料失敗,請稍後再試。</p>";
-    document.getElementById("global-loading").style.display = "none";
-    return;
-  }
-
-  const data = await res.json();
-  const tracks = data.items;
-
-  // ---- 1) Spotify 歌手流派(當作備援來源,常常是空的)----
-  const artistIds = [...new Set(tracks.map(t => t.artists[0].id))];
-  const spotifyGenreMap = {};
-
-  for (const artistId of artistIds) {
-    try {
-      const artistRes = await fetch(
-        `https://api.spotify.com/v1/artists/${artistId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!artistRes.ok) {
-        spotifyGenreMap[artistId] = [];
-        continue;
-      }
-      const artist = await artistRes.json();
-      spotifyGenreMap[artistId] = artist.genres || [];
-    } catch (err) {
-      spotifyGenreMap[artistId] = [];
-    }
-  }
-
-  // ---- 2) 逐首曲目查詢 Deezer(知名度 rank + 專輯流派,同專輯共用快取)----
-  const albumGenreCache = {}; // albumId -> genre string 或 null,避免同專輯重複查詢
-  const enrichedTracks = [];
-  for (const track of tracks) {
-    const artistName = track.artists[0].name;
-    const trackName = track.name;
-
-    const deezerData = await fetchDeezerData(trackName, artistName, track.external_ids?.isrc);
-
-    let genre = null;
-    if (deezerData?.albumId) {
-      if (deezerData.albumId in albumGenreCache) {
-        genre = albumGenreCache[deezerData.albumId];
-      } else {
-        genre = await fetchDeezerAlbumGenre(deezerData.albumId);
-        albumGenreCache[deezerData.albumId] = genre;
-      }
-    }
-
-    // Deezer 查無流派時,退回 Spotify 的歌手分類(常常是空的,但聊勝於無)
-    if (!genre) {
-      const spotifyGenres = spotifyGenreMap[track.artists[0].id] || [];
-      genre = spotifyGenres.length > 0 ? spotifyGenres[0] : null;
-    }
-
-    enrichedTracks.push({
-      track,
-      fameRank: deezerData?.rank ?? null,
-      genre,
-    });
-
-    container.innerHTML = `<p style='color:#999;'>查詢中... (${enrichedTracks.length}/${tracks.length})</p>`;
-  }
-
-  renderTracks(enrichedTracks);
-  renderDecadeAnalysis(tracks);
-  renderFameAnalysis(enrichedTracks);
-  renderGenreAnalysis(enrichedTracks);
-}
-
-// ========================================
-// Deezer:優先用 ISRC(國際標準錄音代碼)做精確比對,
-// 查無 ISRC 或查詢失敗時,才退回用曲名+歌手名模糊搜尋
-// 回傳 { rank, albumId },查無資料回傳 null
-// 免費、不需要 API key,但不支援 CORS,所以用 JSONP 繞過
-// ========================================
-async function fetchDeezerData(trackName, artistName, isrc) {
-  // 優先:ISRC 精確查詢
-  if (isrc) {
-    try {
-      const url = `https://api.deezer.com/track/isrc:${isrc}?output=jsonp`;
-      const data = await jsonp(url);
-      if (data && typeof data.rank === "number") {
-        return { rank: data.rank, albumId: data.album?.id ?? null };
-      }
-    } catch (err) {
-      console.warn(`Deezer ISRC 查詢失敗: ${isrc}`, err.message);
-    }
-  }
-
-  // 備援:曲名+歌手名模糊搜尋
-  try {
-    const query = encodeURIComponent(`artist:"${artistName}" track:"${trackName}"`);
-    const url = `https://api.deezer.com/search/track?q=${query}&output=jsonp`;
-    const data = await jsonp(url);
-    if (data && data.data && data.data.length > 0) {
-      const match = data.data[0];
-      return { rank: match.rank ?? null, albumId: match.album?.id ?? null };
-    }
-    return null;
-  } catch (err) {
-    console.warn(`Deezer 曲名搜尋失敗: ${artistName} - ${trackName}`, err.message);
-    return null;
-  }
-}
-
-// ========================================
-// Deezer:用專輯 ID 查詢該專輯的流派分類
-// ========================================
-async function fetchDeezerAlbumGenre(albumId) {
-  try {
-    const url = `https://api.deezer.com/album/${albumId}?output=jsonp`;
-    const data = await jsonp(url);
-    if (data && data.genres && data.genres.data && data.genres.data.length > 0) {
-      return data.genres.data[0].name;
-    }
-    return null;
-  } catch (err) {
-    console.warn(`Deezer 專輯流派查詢失敗: album ${albumId}`, err.message);
-    return null;
-  }
-}
-
-// ========================================
-// 顯示曲目清單(含發行年份 / 知名度 / 流派)
-// ========================================
-function renderTracks(enrichedTracks) {
-  const container = document.getElementById("track-list");
-  document.getElementById("history-view").style.display = "block";
-  container.innerHTML = "";
-
-  const note = document.createElement("p");
-  note.className = "no-data-note";
-  //note.textContent = "註:知名度與流派皆來自 Deezer(同專輯的歌曲共用查詢結果以加速);查無資料時退回 Spotify 分類(Spotify 原生流行度欄位已被官方停止提供)。";
-  container.appendChild(note);
-
-  enrichedTracks.forEach(({ track, fameRank, genre }) => {
-    const releaseYear = track.album.release_date?.split("-")[0] || "未知";
-
-    // 知名度改顯示級距標籤(附上原始 rank 供參考)
-    const fameLabel = getFameLabel(fameRank);
-    const fameText = fameLabel === "無資料" ? "無資料" : `${fameLabel}(rank ${fameRank.toLocaleString()})`;
-
-    // 流派改顯示歸類後的12組,對照不到的顯示「其他」
-    let genreText = "無資料";
-    if (genre) {
-      genreText = GENRE_GROUP_MAP[genre] || "其他";
-    }
-
-    const item = document.createElement("div");
-    item.className = "track-item";
-    item.innerHTML = `
-      <img src="${track.album.images[2]?.url || track.album.images[0]?.url}" width="60" height="60">
-      <div>
-        <strong>${track.name}</strong> - ${track.artists.map(a => a.name).join(", ")}<br>
-        <small>${releaseYear} ｜ ${fameText} ｜ ${genreText}</small>
+  if (q.scale === "pair10") {
+    bodyHtml = `
+      <p class="q-text">${stem}</p>
+      <div class="pair-labels"><span>${q.left}</span><span>${q.right}</span></div>
+      <div class="scale-row" role="group" aria-label="1到10選擇">
+        ${Array.from({ length: 10 }, (_, i) => i + 1)
+          .map((n) => scaleBtn(q.id, n, answers[q.id]))
+          .join("")}
       </div>
+      <div class="scale-endlabels"><span>1</span><span>10</span></div>
     `;
-    container.appendChild(item);
-  });
-}
-
-// ========================================
-// 通用工具:計算 Shannon Entropy 與畫長條圖
-// H = -Σ p_i * log2(p_i)
-// ========================================
-function calculateShannonEntropy(counts) {
-  const total = Object.values(counts).reduce((sum, c) => sum + c, 0);
-  if (total === 0) return 0;
-
-  let entropy = 0;
-  for (const count of Object.values(counts)) {
-    if (count === 0) continue;
-    const p = count / total;
-    entropy -= p * Math.log2(p);
+  } else if (q.scale === "importance10") {
+    bodyHtml = `
+      <p class="q-text">${stem}</p>
+      <p class="q-item">${q.text}</p>
+      <div class="scale-row" role="group" aria-label="1到10重要程度">
+        ${Array.from({ length: 10 }, (_, i) => i + 1)
+          .map((n) => scaleBtn(q.id, n, answers[q.id]))
+          .join("")}
+      </div>
+      <div class="scale-endlabels"><span>完全不重要</span><span>非常重要</span></div>
+    `;
+  } else if (q.scale === "justify10") {
+    bodyHtml = `
+      <p class="q-text">${stem}</p>
+      <p class="q-item">${q.text}</p>
+      <div class="scale-row" role="group" aria-label="1到10正當程度">
+        ${Array.from({ length: 10 }, (_, i) => i + 1)
+          .map((n) => scaleBtn(q.id, n, answers[q.id]))
+          .join("")}
+      </div>
+      <div class="scale-endlabels"><span>從不正當</span><span>總是正當</span></div>
+    `;
+  } else if (q.scale === "agree4") {
+    bodyHtml = `
+      <p class="q-text">${stem}</p>
+      <p class="q-item">${q.text}</p>
+      <div class="scale-row of4" role="group" aria-label="1到4同意程度">
+        ${[1, 2, 3, 4].map((n) => scaleBtn(q.id, n, answers[q.id])).join("")}
+      </div>
+      <div class="scale-endlabels"><span>非常不同意</span><span>非常同意</span></div>
+    `;
   }
-  return entropy;
+
+  quizRoot.innerHTML = `
+    <div class="q-card">
+      ${bodyHtml}
+    </div>
+    <div class="nav-row">
+      <button class="btn secondary" id="prev-btn" ${currentIndex === 0 ? "disabled" : ""}>← 上一題</button>
+      <span class="nav-hint">${answers[q.id] !== undefined ? "已作答" : "請選擇一個答案"}</span>
+      <button class="btn" id="next-btn" ${answers[q.id] === undefined ? "disabled" : ""}>
+        ${currentIndex === QUESTIONS.length - 1 ? "完成測驗 →" : "下一題 →"}
+      </button>
+    </div>
+  `;
+
+  quizRoot.querySelectorAll("[data-qid]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const qid = btn.getAttribute("data-qid");
+      const val = Number(btn.getAttribute("data-val"));
+      answers[qid] = val;
+      renderQuestion();
+      // auto-advance shortly after any answer selection
+      setTimeout(() => goNext(), 180);
+    });
+  });
+
+  const prevBtn = document.getElementById("prev-btn");
+  const nextBtn = document.getElementById("next-btn");
+  if (prevBtn) prevBtn.addEventListener("click", goPrev);
+  if (nextBtn) nextBtn.addEventListener("click", goNext);
 }
 
-// ========================================
-// 產生圓形進度條 SVG,percent: 0~100
-// ========================================
-function generateCircularProgressSVG(percent, size = 90, strokeWidth = 9, color = "#1DB954") {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const clampedPercent = Math.max(0, Math.min(100, percent));
-  const offset = circumference - (clampedPercent / 100) * circumference;
-  const center = size / 2;
+function scaleBtn(qid, n, selectedVal) {
+  const sel = selectedVal === n ? "selected" : "";
+  return `<button class="scale-btn ${sel}" data-qid="${qid}" data-val="${n}">${n}</button>`;
+}
+
+function goPrev() {
+  if (currentIndex > 0) {
+    currentIndex -= 1;
+    renderQuestion();
+  }
+}
+function goNext() {
+  if (answers[QUESTIONS[currentIndex].id] === undefined) return;
+  if (currentIndex < QUESTIONS.length - 1) {
+    currentIndex += 1;
+    renderQuestion();
+  } else {
+    finishQuiz();
+  }
+}
+
+// ---------------------------------------------------------------
+// Finish → compute scores → show results
+// ---------------------------------------------------------------
+async function finishQuiz() {
+  scores = computeScores(answers);
+  showScreen("result");
+  renderIdeologyPanel();
+  await refreshHistoryAndDraw();
+}
+
+// value 假設落在 1-10 尺度上,轉成 0-100 的百分比位置
+function toPercent(value) {
+  const p = ((value - 1) / 9) * 100;
+  return Math.max(0, Math.min(100, p));
+}
+
+function bigBarHTML({ axisName, leftLabel, rightLabel, percent, tier, valueDisplay, explanationPlaceholder }) {
+  return `
+    <div class="ibar-row">
+      <div class="ibar-tier">${axisName}：${tier}<span class="ibar-tier-value">(${valueDisplay})</span></div>
+      <div class="ibar-track big">
+        <div class="ibar-fill-left" style="width:${percent}%"></div>
+        <div class="ibar-fill-right" style="width:${100 - percent}%"></div>
+        <div class="ibar-marker" style="left:${percent}%"></div>
+      </div>
+      <div class="ibar-endlabels"><span>${leftLabel}</span><span>${rightLabel}</span></div>
+      <p class="ibar-explanation placeholder">${explanationPlaceholder}</p>
+    </div>
+  `;
+}
+
+function smallBarHTML({ label, percent, valueDisplay, tier, leftLabel, rightLabel, explanationPlaceholder }) {
+  return `
+    <div class="ibar-row small">
+      <div class="ibar-small-header"><span>${label}</span><strong>${tier}<span class="ibar-tier-value">(${valueDisplay})</span></strong></div>
+      <div class="ibar-track small">
+        <div class="ibar-fill-single" style="width:${percent}%"></div>
+      </div>
+      <div class="ibar-endlabels"><span>${leftLabel}</span><span>${rightLabel}</span></div>
+      <p class="ibar-explanation placeholder">${explanationPlaceholder}</p>
+    </div>
+  `;
+}
+
+function renderIdeologyPanel() {
+  const { party, distance } = findNearestParty(scores);
+  let matchSentence;
+  if (distance <= 1.5) {
+    const countryZh = COUNTRY_NAME_ZH[party.country] || party.country;
+    matchSentence = `你的意識形態和 <strong>${countryZh} ${party.party}</strong> 支持者最接近`;
+  } else {
+    matchSentence = "你的意識形態不接近以下任何政黨";
+  }
+
+  const econTier = economicLabel(scores.equality);
+  const polityTier = politicalSystemLabel(scores.liberty);
+
+  // 經濟軸:平等分數越高越「左」,所以左端點放高分那一側
+  const econPercent = 100 - toPercent(scores.equality);
+  // 社會軸:自由分數越高越靠「自由意志」端(放右側)
+  const polityPercent = toPercent(scores.liberty);
+
+  document.getElementById("ideology-panel").innerHTML = `
+    <p class="match-sentence">${matchSentence}</p>
+
+    ${bigBarHTML({
+      axisName: "經濟",
+      leftLabel: "平等", rightLabel: "市場",
+      percent: econPercent, tier: econTier, valueDisplay: scores.equality,
+      explanationPlaceholder: ECONOMIC_EXPLANATIONS[econTier] || "",
+    })}
+    ${bigBarHTML({
+      axisName: "社會",
+      leftLabel: "威權", rightLabel: "自由",
+      percent: polityPercent, tier: polityTier, valueDisplay: scores.liberty,
+      explanationPlaceholder: SOCIAL_EXPLANATION_FIXED,
+    })}
+
+    <div class="ibar-small-group">
+      ${smallBarHTML({
+        label: "政治體制", percent: toPercent(scores.democracy), valueDisplay: scores.democracy,
+        tier: democracyLabel(scores.democracy), leftLabel: "威權", rightLabel: "民主",
+        explanationPlaceholder: DEMOCRACY_EXPLANATIONS[democracyLabel(scores.democracy)] || "",
+      })}
+      ${smallBarHTML({
+        label: "個人選擇", percent: toPercent(scores.individual), valueDisplay: scores.individual,
+        tier: individualLabel(scores.individual), leftLabel: "傳統", rightLabel: "進步",
+        explanationPlaceholder: INDIVIDUAL_EXPLANATIONS[individualLabel(scores.individual)] || "",
+      })}
+    </div>
+
+    <div class="ibar-overall-note placeholder">
+      （這裡放不會隨結果改變的總體說明文字,例如整份測驗的計分邏輯或四個維度的關係,請自行填寫）
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------
+// Chart rendering (SVG, range 1-10, gridline every 1.0)
+// ---------------------------------------------------------------
+const CHART_SIZE = 680;
+const MARGIN = { top: 40, right: 46, bottom: 62, left: 70 };
+const PLOT = CHART_SIZE - MARGIN.left - MARGIN.right;
+const MIN_V = 1, MAX_V = 10;
+
+function scalePos(v) {
+  return ((v - MIN_V) / (MAX_V - MIN_V)) * PLOT;
+}
+
+function buildChartSVG({ xKey, yKey, xLabel, yLabel, poleLabels, myPoint, otherPoints, showParty, showCountry, showAll }) {
+  const w = CHART_SIZE;
+  const h = CHART_SIZE;
+  const gx = (v) => MARGIN.left + scalePos(v);
+  const gy = (v) => h - MARGIN.bottom - scalePos(v);
+
+  let gridLines = "";
+  for (let v = MIN_V; v <= MAX_V; v++) {
+    const x = gx(v);
+    const y = gy(v);
+    gridLines += `<line x1="${x}" y1="${MARGIN.top}" x2="${x}" y2="${h - MARGIN.bottom}" stroke="#D8D3CF" stroke-width="1"/>`;
+    gridLines += `<line x1="${MARGIN.left}" y1="${y}" x2="${w - MARGIN.right}" y2="${y}" stroke="#D8D3CF" stroke-width="1"/>`;
+    gridLines += `<text x="${x}" y="${h - MARGIN.bottom + 18}" font-size="11" text-anchor="middle">${v}</text>`;
+    gridLines += `<text x="${MARGIN.left - 10}" y="${y + 4}" font-size="11" text-anchor="end">${v}</text>`;
+  }
+  // 中線:1-10 尺度的中點是 5.5
+  const cx = gx(5.5), cy = gy(5.5);
+  gridLines += `<line x1="${cx}" y1="${MARGIN.top}" x2="${cx}" y2="${h - MARGIN.bottom}" stroke="#B9B2AA" stroke-width="1" stroke-dasharray="4 4"/>`;
+  gridLines += `<line x1="${MARGIN.left}" y1="${cy}" x2="${w - MARGIN.right}" y2="${cy}" stroke="#B9B2AA" stroke-width="1" stroke-dasharray="4 4"/>`;
+
+  let partyDots = "";
+  if (showParty) {
+    for (const p of PARTIES) {
+      const x = gx(p[xKey]);
+      const y = gy(p[yKey]);
+      const countryZh = COUNTRY_NAME_ZH[p.country] || p.country;
+      const title = p.year ? `${countryZh} ${p.party} (${p.year})` : `${countryZh} ${p.party}`;
+      const nAttr = p.n ? ` data-n="${p.n}"` : "";
+      partyDots += `<circle class="party-dot dot-click" cx="${x}" cy="${y}" r="4"
+        data-title="${title}"${nAttr} data-xdim="${xKey}" data-xlabel="${xLabel}" data-xval="${p[xKey]}" data-ydim="${yKey}" data-ylabel="${yLabel}" data-yval="${p[yKey]}"></circle>`;
+    }
+  }
+
+  let countryDots = "";
+  if (showCountry) {
+    for (const c of COUNTRIES) {
+      const x = gx(c[xKey]);
+      const y = gy(c[yKey]);
+      const countryZh = COUNTRY_NAME_ZH[c.country] || c.country;
+      const nAttr = c.n ? ` data-n="${c.n}"` : "";
+      countryDots += `<circle class="country-dot dot-click" cx="${x}" cy="${y}" r="5"
+        data-title="${countryZh}"${nAttr} data-xdim="${xKey}" data-xlabel="${xLabel}" data-xval="${c[xKey]}" data-ydim="${yKey}" data-ylabel="${yLabel}" data-yval="${c[yKey]}"></circle>`;
+    }
+  }
+
+  let otherDots = "";
+  if (showAll && otherPoints && otherPoints.length) {
+    for (const r of otherPoints) {
+      const x = gx(r[xKey]);
+      const y = gy(r[yKey]);
+      const label = r.nickname || "匿名";
+      otherDots += `<circle class="dot-click" cx="${x}" cy="${y}" r="4" fill="#3B5BA5" opacity="0.55"
+        data-title="${label}" data-xdim="${xKey}" data-xlabel="${xLabel}" data-xval="${r[xKey]}" data-ydim="${yKey}" data-ylabel="${yLabel}" data-yval="${r[yKey]}"></circle>`;
+    }
+  }
+
+  let meMark = "";
+  if (myPoint) {
+    const x = gx(myPoint[xKey]);
+    const y = gy(myPoint[yKey]);
+    meMark = `
+      <line class="me-cross" x1="${x - 10}" y1="${y}" x2="${x + 10}" y2="${y}"/>
+      <line class="me-cross" x1="${x}" y1="${y - 10}" x2="${x}" y2="${y + 10}"/>
+      <circle class="me-dot dot-click" cx="${x}" cy="${y}" r="7"
+        data-title="你" data-xdim="${xKey}" data-xlabel="${xLabel}" data-xval="${myPoint[xKey]}" data-ydim="${yKey}" data-ylabel="${yLabel}" data-yval="${myPoint[yKey]}"></circle>
+    `;
+  }
+
+  let poleText = "";
+  if (poleLabels) {
+    const { left, right, top, bottom } = poleLabels;
+    const midX = MARGIN.left + PLOT / 2;
+    const midY = MARGIN.top + PLOT / 2;
+    poleText += `<text class="pole-label" x="${midX}" y="${MARGIN.top - 14}" text-anchor="middle">${top}</text>`;
+    poleText += `<text class="pole-label" x="${midX}" y="${h - 12}" text-anchor="middle">${bottom}</text>`;
+    poleText += `<text class="pole-label" x="${14}" y="${midY}" text-anchor="start">${left}</text>`;
+    poleText += `<text class="pole-label" x="${w - 14}" y="${midY}" text-anchor="end">${right}</text>`;
+  }
 
   return `
-    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">
-      <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="#333" stroke-width="${strokeWidth}" />
-      <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${color}" stroke-width="${strokeWidth}"
-        stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"
-        transform="rotate(-90 ${center} ${center})" style="transition: stroke-dashoffset 0.6s ease;" />
-      <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#fff"
-        font-size="${size * 0.22}" font-weight="bold">${clampedPercent.toFixed(0)}%</text>
+    <svg class="chart" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      ${gridLines}
+      ${poleText}
+      ${countryDots}
+      ${partyDots}
+      ${otherDots}
+      ${meMark}
     </svg>
   `;
 }
 
-function renderBarChart(containerId, counts, orderedLabels) {
-  const barsContainer = document.getElementById(containerId);
-  barsContainer.innerHTML = "";
-  const maxCount = Math.max(...Object.values(counts), 1);
+function drawCharts() {
+  hidePopover();
 
-  orderedLabels.forEach(label => {
-    const count = counts[label] || 0;
-    const widthPercent = (count / maxCount) * 100;
-
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <div class="bar-label">${label}</div>
-      <div class="bar-track">
-        <div class="bar-fill" style="width:${widthPercent}%;"></div>
-      </div>
-      <div class="bar-count">${count}</div>
-    `;
-    barsContainer.appendChild(row);
+  document.getElementById("chart-eqli").innerHTML = buildChartSVG({
+    xKey: "equality", yKey: "liberty", xLabel: "經濟", yLabel: "社會",
+    poleLabels: { left: "市場", right: "平等", top: "自由", bottom: "威權" },
+    myPoint: scores, otherPoints: historyResults,
+    showParty: chartMode.eqli.party, showCountry: chartMode.eqli.country, showAll: chartMode.eqli.all,
+  });
+  document.getElementById("chart-indem").innerHTML = buildChartSVG({
+    xKey: "individual", yKey: "democracy", xLabel: "個人選擇", yLabel: "政治體制",
+    poleLabels: { left: "傳統", right: "進步", top: "民主", bottom: "威權" },
+    myPoint: scores, otherPoints: historyResults,
+    showParty: chartMode.indem.party, showCountry: chartMode.indem.country, showAll: chartMode.indem.all,
   });
 }
 
-// ========================================
-// 頂部總覽的四個補充統計欄位:
-// 平均年份 / 流行程度(依分組資料平均)/ 最愛年代(眾數) / 最愛類型(眾數)
-// 每個欄位各自獨立顯示,不用等三個維度都算完
-// ========================================
-function renderQuickStats() {
-  const el = document.getElementById("quick-stats");
-  if (!el) return;
+// ---------------------------------------------------------------
+// Click-to-open popover for chart dots (speech-bubble style)
+// ---------------------------------------------------------------
+const popover = document.getElementById("dot-popover");
+const popoverTitle = popover.querySelector(".dot-popover-title");
+const popoverBody = popover.querySelector(".dot-popover-body");
 
-  el.innerHTML = `
-    <div class="quick-stat-item"><span class="quick-stat-label">平均年份</span><span class="quick-stat-value">${quickStats.avgYear ?? "—"}</span></div>
-    <div class="quick-stat-item"><span class="quick-stat-label">最愛年代</span><span class="quick-stat-value">${quickStats.favoriteDecade ?? "—"}</span></div>
-    <div class="quick-stat-item"><span class="quick-stat-label">流行程度</span><span class="quick-stat-value">${quickStats.avgFameLabel ?? "—"}</span></div>
-    <div class="quick-stat-item"><span class="quick-stat-label">最愛類型</span><span class="quick-stat-value">${quickStats.favoriteGenre ?? "—"}</span></div>
+function showDotPopover(targetEl) {
+  const title = targetEl.getAttribute("data-title");
+  const n = targetEl.getAttribute("data-n");
+  const xDim = targetEl.getAttribute("data-xdim");
+  const xLabel = targetEl.getAttribute("data-xlabel");
+  const xVal = targetEl.getAttribute("data-xval");
+  const yDim = targetEl.getAttribute("data-ydim");
+  const yLabel = targetEl.getAttribute("data-ylabel");
+  const yVal = targetEl.getAttribute("data-yval");
+
+  const xTier = getTierLabel(xDim, Number(xVal));
+  const yTier = getTierLabel(yDim, Number(yVal));
+
+  popoverTitle.textContent = title;
+  const nRow = n ? `<div class="dot-popover-n">N=${n}</div>` : "";
+  popoverBody.innerHTML = `
+    ${nRow}
+    <div class="dot-popover-row"><span>${xLabel}</span><strong>${xVal}<span class="dot-popover-tier">(${xTier})</span></strong></div>
+    <div class="dot-popover-row"><span>${yLabel}</span><strong>${yVal}<span class="dot-popover-tier">(${yTier})</span></strong></div>
   `;
+  positionPopover(targetEl);
 }
 
-// ========================================
-// 品味混亂程度:三個維度依各自的分類數量加權平均
-// 年代7組、知名度5組、流派12組,分類越細的維度權重越高
-// 綜合值 = (7×年代% + 5×知名度% + 12×流派%) / (7+5+12)
-// ========================================
-function renderTasteSummary() {
-  const { decade, fame, genre } = entropyPercents;
-  if (decade === null || fame === null || genre === null) return; // 還沒算齊三個,先不顯示
-
-  const WEIGHT_DECADE = 7;
-  const WEIGHT_FAME = 5;
-  const WEIGHT_GENRE = 12;
-  const totalWeight = WEIGHT_DECADE + WEIGHT_FAME + WEIGHT_GENRE;
-
-  const weightedScore = (WEIGHT_DECADE * decade + WEIGHT_FAME * fame + WEIGHT_GENRE * genre) / totalWeight;
-
-  document.getElementById("taste-summary").style.display = "block";
-  document.getElementById("taste-summary-value").innerHTML = generateCircularProgressSVG(weightedScore, 140, 14, "#1DB954");
-  document.getElementById("taste-summary-breakdown").innerHTML = `
-    年代多元度 ${decade.toFixed(1)}% ｜ 人氣多元度 ${fame.toFixed(1)}% ｜ 類型多元度 ${genre.toFixed(1)}%
-  `;
-  document.getElementById("global-loading").style.display = "none";
+function showInfoPopover(targetEl) {
+  const title = targetEl.getAttribute("data-info-title");
+  const body = targetEl.getAttribute("data-info-body");
+  popoverTitle.textContent = title;
+  popoverBody.innerHTML = `<p class="dot-popover-text">${body}</p>`;
+  positionPopover(targetEl);
 }
 
-// ========================================
-// 依年代分組 (1960s ~ 2020s) + Shannon Entropy
-// ========================================
-function getDecadeLabel(releaseDate) {
-  if (!releaseDate) return "其他";
-  const year = parseInt(releaseDate.split("-")[0], 10);
-  if (isNaN(year) || year < 1960 || year >= 2030) return "其他";
-  const decadeStart = Math.floor(year / 10) * 10;
-  return `${decadeStart}s`;
+function positionPopover(targetEl) {
+  popover.classList.remove("hidden");
+  // measure after making visible (but keep 0 opacity handled by CSS class if needed)
+  const rect = targetEl.getBoundingClientRect();
+  const pw = popover.offsetWidth;
+  const ph = popover.offsetHeight;
+  let left = rect.left + rect.width / 2 - pw / 2;
+  let top = rect.top - ph - 12;
+  let arrowSide = "bottom"; // triangle points down toward the dot by default
+
+  // clamp horizontally within viewport
+  const margin = 8;
+  if (left < margin) left = margin;
+  if (left + pw > window.innerWidth - margin) left = window.innerWidth - margin - pw;
+
+  // if not enough room above, place below the dot instead
+  if (top < margin) {
+    top = rect.bottom + 12;
+    arrowSide = "top";
+  }
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+
+  // position the arrow to point at the target's actual x position
+  const arrowLeft = rect.left + rect.width / 2 - left;
+  popover.style.setProperty("--arrow-left", `${arrowLeft}px`);
+  popover.classList.toggle("arrow-top", arrowSide === "top");
+  popover.classList.toggle("arrow-bottom", arrowSide === "bottom");
 }
 
-function renderDecadeAnalysis(tracks) {
-  const decadeOrder = ["1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"];
-  const counts = {};
-  decadeOrder.forEach(d => (counts[d] = 0));
-  let otherCount = 0;
-  let yearSum = 0;
-  let yearCount = 0;
+function hidePopover() {
+  popover.classList.add("hidden");
+}
 
-  tracks.forEach(track => {
-    const label = getDecadeLabel(track.album.release_date);
-    if (label === "其他") otherCount++;
-    else counts[label]++;
+document.addEventListener("click", (e) => {
+  const dot = e.target.closest(".dot-click");
+  const infoBtn = e.target.closest(".info-btn");
+  if (dot) {
+    showDotPopover(dot);
+  } else if (infoBtn) {
+    showInfoPopover(infoBtn);
+  } else if (!e.target.closest("#dot-popover")) {
+    hidePopover();
+  }
+});
+window.addEventListener("resize", hidePopover);
+window.addEventListener("scroll", hidePopover, true);
 
-    const year = parseInt(track.album.release_date?.split("-")[0], 10);
-    if (!isNaN(year)) {
-      yearSum += year;
-      yearCount++;
+async function refreshHistoryAndDraw() {
+  drawCharts(); // draw immediately with "mine" mode, don't block on network
+  try {
+    const { data, error } = await supabase
+      .from("quiz_results")
+      .select("equality,liberty,democracy,individual,nickname")
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (!error && data) {
+      historyResults = data;
+      drawCharts();
     }
+  } catch (e) {
+    // silently ignore — charts still work in "mine" mode
+    console.warn("無法讀取歷史結果", e);
+  }
+}
+
+document.querySelectorAll(".toggle-group[data-chart]").forEach((group) => {
+  group.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const chart = group.getAttribute("data-chart");
+      const mode = btn.getAttribute("data-mode");
+      chartMode[chart][mode] = !chartMode[chart][mode];
+      btn.classList.toggle("active", chartMode[chart][mode]);
+      drawCharts();
+    });
   });
+});
 
-  // 平均年份(全部曲目,不限1960-2020區間)
-  if (yearCount > 0) {
-    quickStats.avgYear = (yearSum / yearCount).toFixed(1);
-  }
+// ---------------------------------------------------------------
+// Save to Supabase
+// ---------------------------------------------------------------
+const saveBtn = document.getElementById("save-btn");
+const statusMsg = document.getElementById("save-status");
+const nicknameInput = document.getElementById("nickname-input");
 
-  // 最愛年代:眾數(只在固定7個年代裡取,不含「其他」)
-  const maxDecadeCount = Math.max(...decadeOrder.map(d => counts[d]));
-  if (maxDecadeCount > 0) {
-    quickStats.favoriteDecade = decadeOrder.find(d => counts[d] === maxDecadeCount);
-  }
+saveBtn.addEventListener("click", async () => {
+  saveBtn.disabled = true;
+  statusMsg.textContent = "儲存中…";
+  statusMsg.className = "status-msg";
+  try {
+    const nickname = nicknameInput.value.trim() || null;
+    const { data, error } = await supabase
+      .from("quiz_results")
+      .insert([{ ...scores, nickname }])
+      .select()
+      .single();
+    if (error) throw error;
 
-  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
-  renderBarChart("decade-bars", counts, decadeOrder);
-
-  if (otherCount > 0) {
-    const barsContainer = document.getElementById("decade-bars");
-    const maxCount = Math.max(...Object.values(counts), 1);
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <div class="bar-label">其他</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${(otherCount / maxCount) * 100}%; background:#666;"></div></div>
-      <div class="bar-count">${otherCount}</div>
-    `;
-    barsContainer.appendChild(row);
-  }
-
-  const entropy = calculateShannonEntropy(counts);
-  const maxPossibleEntropy = Math.log2(decadeOrder.length);
-  const percent = maxPossibleEntropy > 0 ? (entropy / maxPossibleEntropy) * 100 : 0;
-  entropyPercents.decade = percent;
-
-  document.getElementById("decade-view").style.display = "block";
-  document.getElementById("decade-entropy-result").innerHTML = `
-    <div class="entropy-row">
-      ${generateCircularProgressSVG(percent, 90, 9)}
-      <div>
-        <div style="font-size:15px; color:#ccc;">年代多元度</div>
-        <span style="color:#999; font-size:13px;">
-          = Entropy ${entropy.toFixed(4)} / Max ${maxPossibleEntropy.toFixed(4)}<br>
-          共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首超出範圍未列入` : ""}
-        </span>
-      </div>
-    </div>
-  `;
-  renderTasteSummary();
-  renderQuickStats();
-}
-
-// ========================================
-// 依知名度分組(Deezer rank) + Shannon Entropy
-// 分級門檻是依 Deezer rank 概略估計,非官方公告的絕對標準
-// ========================================
-function getFameLabel(rank) {
-  if (typeof rank !== "number") return "無資料";
-  if (rank >= 750000) return "超夯";
-  if (rank >= 250000) return "主流";
-  if (rank >= 75000) return "中等";
-  if (rank >= 25000) return "小眾";
-  return "稀有";
-}
-
-const FAME_ORDER = ["稀有", "小眾", "中等", "主流", "超夯"];
-
-function renderFameAnalysis(enrichedTracks) {
-  const fameOrder = FAME_ORDER;
-  const counts = {};
-  fameOrder.forEach(f => (counts[f] = 0));
-  let noDataCount = 0;
-  let ordinalSum = 0;
-  let ordinalCount = 0;
-
-  enrichedTracks.forEach(({ fameRank }) => {
-    const label = getFameLabel(fameRank);
-    if (label === "無資料") {
-      noDataCount++;
-    } else {
-      counts[label]++;
-      ordinalSum += fameOrder.indexOf(label) + 1; // 1~5
-      ordinalCount++;
+    // best-effort: store raw answers privately (insert-only table)
+    try {
+      await supabase.from("quiz_answers_private").insert([{ result_id: data.id, answers }]);
+    } catch (e) {
+      console.warn("原始作答儲存失敗(不影響主要結果)", e);
     }
-  });
 
-  // 依「分組後」的資料算平均流行程度,而不是直接平均原始 rank 數字
-  if (ordinalCount > 0) {
-    const avgOrdinal = Math.round(ordinalSum / ordinalCount);
-    const clamped = Math.min(fameOrder.length, Math.max(1, avgOrdinal));
-    quickStats.avgFameLabel = fameOrder[clamped - 1];
+    statusMsg.textContent = "已儲存！感謝你的填答。";
+    statusMsg.className = "status-msg ok";
+    saveBtn.textContent = "已儲存";
+    await refreshHistoryAndDraw();
+  } catch (e) {
+    console.error(e);
+    statusMsg.textContent = "儲存失敗,請確認 config.js 是否已填入你的 Supabase 專案資訊。";
+    statusMsg.className = "status-msg err";
+    saveBtn.disabled = false;
   }
-
-  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
-  renderBarChart("fame-bars", counts, fameOrder);
-
-  const entropy = calculateShannonEntropy(counts);
-  const maxPossibleEntropy = Math.log2(fameOrder.length);
-  const percent = maxPossibleEntropy > 0 ? (entropy / maxPossibleEntropy) * 100 : 0;
-  entropyPercents.fame = percent;
-
-  document.getElementById("fame-view").style.display = "block";
-  document.getElementById("fame-entropy-result").innerHTML = `
-    <div class="entropy-row">
-      ${generateCircularProgressSVG(percent, 90, 9)}
-      <div>
-        <div style="font-size:15px; color:#ccc;">人氣多元度</div>
-        <span style="color:#999; font-size:13px;">
-          = Entropy ${entropy.toFixed(4)} / Max ${maxPossibleEntropy.toFixed(4)}<br>
-          共 ${totalClassified} 首納入計算${noDataCount > 0 ? `，${noDataCount} 首查無資料未列入` : ""}
-        </span>
-      </div>
-    </div>
-  `;
-  renderTasteSummary();
-  renderQuickStats();
-}
-
-// ========================================
-// 流派分組對照表:把 Deezer 原始流派歸類成 12 個固定大類
-// 對照不到的原始流派會歸入「其他」,entropy 分母仍固定是 12(不含其他)
-// ========================================
-const GENRE_GROUP_MAP = {
-  "Pop": "流行",
-  "Dance": "流行",
-  "Rap/Hip Hop": "嘻哈",
-  "Rock": "搖滾",
-  "Metal": "搖滾",
-  "R&B": "R&B",
-  "Soul & Funk": "R&B",
-  "Reggae": "R&B",
-  "Alternative": "另類",
-  "Electro": "電子",
-  "Folk": "民謠",
-  "Jazz": "爵士",
-  "Blues": "爵士",
-  "Classical": "古典",
-  "Asian Music": "亞洲",
-  "Indian Music": "亞洲",
-  "Latin Music": "世界",
-  "Brazilian Music": "世界",
-  "African Music": "世界",
-  "Films/Games": "原聲帶",
-};
-
-const GENRE_GROUP_ORDER = ["流行", "嘻哈", "搖滾", "R&B", "另類", "電子", "民謠", "爵士", "古典", "亞洲", "世界", "原聲帶"];
-
-// ========================================
-// 【維度三】依流派分組(固定12組) + Shannon Entropy
-// 不管使用者這次聽到哪些流派,一律顯示全部12組長條(沒聽過的顯示0),
-// entropy 分母固定是 log2(12),可跨時間、跨使用者公平比較
-// ========================================
-function renderGenreAnalysis(enrichedTracks) {
-  const counts = {};
-  GENRE_GROUP_ORDER.forEach(g => (counts[g] = 0));
-  let otherCount = 0;   // 原始流派對照不到這12組的(理論上少見)
-  let noDataCount = 0;  // 完全查無流派資料
-
-  enrichedTracks.forEach(({ genre }) => {
-    if (!genre) {
-      noDataCount++;
-      return;
-    }
-    const group = GENRE_GROUP_MAP[genre];
-    if (group) {
-      counts[group]++;
-    } else {
-      otherCount++;
-    }
-  });
-
-  const totalClassified = Object.values(counts).reduce((a, b) => a + b, 0);
-
-  // 最愛類型:眾數(只在固定12組裡取,不含「其他」)
-  const maxGenreCount = Math.max(...GENRE_GROUP_ORDER.map(g => counts[g]));
-  if (maxGenreCount > 0) {
-    quickStats.favoriteGenre = GENRE_GROUP_ORDER.find(g => counts[g] === maxGenreCount);
-  }
-
-  // 固定顯示全部12組,不管有沒有聽過
-  renderBarChart("genre-bars", counts, GENRE_GROUP_ORDER);
-
-  if (otherCount > 0) {
-    const barsContainer = document.getElementById("genre-bars");
-    const maxCount = Math.max(...Object.values(counts), 1);
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <div class="bar-label">其他</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${(otherCount / maxCount) * 100}%; background:#666;"></div></div>
-      <div class="bar-count">${otherCount}</div>
-    `;
-    barsContainer.appendChild(row);
-  }
-
-  // entropy 計算只用固定12組(不含「其他」),分母固定是 log2(12)
-  const entropy = calculateShannonEntropy(counts);
-  const maxPossibleEntropy = Math.log2(GENRE_GROUP_ORDER.length);
-  const percent = maxPossibleEntropy > 0 ? (entropy / maxPossibleEntropy) * 100 : 0;
-  entropyPercents.genre = percent;
-
-  document.getElementById("genre-view").style.display = "block";
-  document.getElementById("genre-entropy-result").innerHTML = `
-    <div class="entropy-row">
-      ${generateCircularProgressSVG(percent, 90, 9)}
-      <div>
-        <div style="font-size:15px; color:#ccc;">類型多元度</div>
-        <span style="color:#999; font-size:13px;">
-          = Entrpy ${entropy.toFixed(4)} / Max ${maxPossibleEntropy.toFixed(4)}<br>
-          共 ${totalClassified} 首納入計算${otherCount > 0 ? `，${otherCount} 首歸類為其他` : ""}${noDataCount > 0 ? `，${noDataCount} 首查無資料` : ""}
-        </span>
-      </div>
-    </div>
-  `;
-  renderTasteSummary();
-  renderQuickStats();
-}
+});
