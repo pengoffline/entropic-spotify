@@ -1,8 +1,9 @@
 // ========================================
-// 基本設定
-// ======================================== 
-const clientId = "18a7af28818a40abafa707e98e4d7a48";
+// 任何想使用這個儲存庫的朋友，請這兩行內容替換為自己的ID和網址
+const clientId = "18a7af28818a40abafa707e98e4d7a48"; 
 const redirectUri = "https://pengoffline.github.io/entropic-spotify/index.html";
+// ======================================== 
+
 
 // 需要的權限:個人資料 + 使用者最常聽曲目
 const scope = "user-read-private user-read-recently-played user-top-read";
